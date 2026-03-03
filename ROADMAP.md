@@ -66,7 +66,7 @@
 
 **Status:** DONE
 **Depends on:** Iteration 1
-**Snapshot:** `snapshots/haruko-3aac093`
+**Snapshot:** `snapshots/haruko-244a28f`
 
 **Goal:** Don't starve. After self-trapping, starvation is the #1 cause of death. This is a quick heuristic win that doesn't need the game simulator — just bias the move scorer toward food.
 
@@ -510,8 +510,8 @@ Track all snapshots here for easy reference in `make compare` commands.
 | Iteration | Snapshot | Avg Turns | Notes |
 |-----------|----------|-----------|-------|
 | 0 (baseline) | — | ~68 | Random safe-move, never snapshotted |
-| 1 | `snapshots/haruko-3aac093` | ~78 (self-play) | Flood fill + space-aware |
-| 2 | `snapshots/haruko-3aac093` | ~28 (self-play) | Food-seeking heuristic, 95% vs v1 |
+| 1 | `snapshots/haruko-244a28f` | ~78 (self-play) | Flood fill + space-aware |
+| 2 | `snapshots/haruko-244a28f` | ~28 (self-play) | Food-seeking heuristic, 95% vs v1 |
 | 3 | | | |
 | 4 | | | |
 | 5 | | | |
