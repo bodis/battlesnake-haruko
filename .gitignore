@@ -27,6 +27,18 @@ go.work.sum
 # env file
 .env
 
+# Build artifacts
+haruko
+.snake.pid
+
+# Bench snapshots and result files
+snapshots/
+*.jsonl
+
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Claude Code — local/user-specific files
+.claude/settings.local.json
+.claude/projects/
