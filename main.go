@@ -27,7 +27,7 @@ func end(state GameState) {
 
 func move(state GameState) BattlesnakeMoveResponse {
 	sim := gameSimFromState(state)
-	dir := sim.BestMove(state.You.ID)
+	dir := sim.BestMove(state.You.ID, 3)
 	m := logic.DirectionName(dir)
 	log.Printf("MOVE %d: %s (health=%d)\n", state.Turn, m, state.You.Health)
 	return BattlesnakeMoveResponse{Move: m}

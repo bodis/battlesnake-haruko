@@ -70,7 +70,7 @@ func TestBestMove_DeadEndAvoidance(t *testing.T) {
 	})
 	g := NewGameSim(5, 5, []SimSnake{me, opp}, nil, nil)
 
-	dir := g.BestMove("me")
+	dir := g.BestMove("me", 3)
 	// Right leads into the pocket — must not pick Right.
 	if dir == Right {
 		t.Errorf("BestMove picked Right (dead-end pocket), expected Up or Left")
@@ -109,7 +109,7 @@ func TestBestMove_NeckTrap(t *testing.T) {
 	//   Right→(3,0) OPEN
 	// Right should be the only good move.
 	g2 := NewGameSim(5, 5, []SimSnake{me2, opp2}, nil, nil)
-	dir2 := g2.BestMove("me")
+	dir2 := g2.BestMove("me", 3)
 	_ = me
 	_ = opp
 	if dir2 != Right {
@@ -128,7 +128,7 @@ func TestBestMove_HeadToHeadKill(t *testing.T) {
 	opp := makeSnake("opp", []Coord{{5, 7}, {5, 8}})                 // length 2
 	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
 
-	dir := g.BestMove("me")
+	dir := g.BestMove("me", 3)
 	// Moving Up puts us at (5,6). If opp moves Down to (5,6), we win.
 	// The minimax should prefer Up because in the worst case (opp moves Down) we still win.
 	if dir != Up {
@@ -145,7 +145,7 @@ func TestBestMove_FoodReachable(t *testing.T) {
 	food := []Coord{{5, 6}} // directly above our head
 	g := NewGameSim(11, 11, []SimSnake{me, opp}, food, nil)
 
-	dir := g.BestMove("me")
+	dir := g.BestMove("me", 3)
 	valid := dir == Up || dir == Down || dir == Left || dir == Right
 	if !valid {
 		t.Errorf("BestMove returned invalid direction %v", dir)
@@ -163,7 +163,7 @@ func TestBestMove_AlreadyDead(t *testing.T) {
 	g := NewGameSim(3, 3, []SimSnake{me}, nil, nil)
 
 	// Should not panic.
-	dir := g.BestMove("me")
+	dir := g.BestMove("me", 3)
 	valid := dir == Up || dir == Down || dir == Left || dir == Right
 	if !valid {
 		t.Errorf("BestMove returned invalid direction %v", dir)
@@ -182,7 +182,7 @@ func TestBestMove_NoOpponents(t *testing.T) {
 	me := makeSnake("me", []Coord{{0, 2}, {0, 1}, {0, 0}})
 	g := NewGameSim(5, 5, []SimSnake{me}, nil, nil)
 
-	dir := g.BestMove("me")
+	dir := g.BestMove("me", 3)
 	valid := dir == Up || dir == Down || dir == Left || dir == Right
 	if !valid {
 		t.Errorf("BestMove returned invalid direction %v", dir)
@@ -190,6 +190,22 @@ func TestBestMove_NoOpponents(t *testing.T) {
 	// Down and Left are clearly bad (wall/body); Up or Right should win.
 	if dir == Down || dir == Left {
 		t.Errorf("BestMove picked a clearly bad direction %v", DirectionName(dir))
+	}
+}
+
+// TestBestMove_DepthComparison: deeper search should not panic and should
+// return valid moves at any depth.
+func TestBestMove_DepthComparison(t *testing.T) {
+	me := makeSnake("me", []Coord{{5, 5}, {5, 4}, {5, 3}})
+	opp := makeSnake("opp", []Coord{{3, 5}, {3, 6}, {3, 7}})
+	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
+
+	for _, depth := range []int{1, 2, 3} {
+		d := g.BestMove("me", depth)
+		valid := d == Up || d == Down || d == Left || d == Right
+		if !valid {
+			t.Errorf("BestMove(depth=%d) returned invalid direction %v", depth, d)
+		}
 	}
 }
 

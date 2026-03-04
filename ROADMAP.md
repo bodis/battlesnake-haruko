@@ -19,10 +19,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iteration 5 |
-| **Next** | Iteration 6 |
+| **Completed** | Iteration 6 |
+| **Next** | Iteration 7 |
 | **Baseline** | v0 random safe-move: ~68 avg turns (self-play) |
-| **Current** | v5 1-ply paranoid minimax: ~87 avg turns (self-play), 16% vs v2 flood-fill |
+| **Current** | v6 depth-3 minimax + alpha-beta: ~328 avg turns (self-play), 30% vs v2 flood-fill |
+| **Key insight** | Eval function is the bottleneck, not search depth. Fix eval before optimizing search. |
 
 ---
 
@@ -242,170 +243,177 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 
 ---
 
-### Iteration 6 — Deeper Minimax + Alpha-Beta Pruning
+### Iteration 6 — Deeper Minimax + Alpha-Beta Pruning ✅
 
-**Status:** TODO
+**Status:** DONE
 **Depends on:** Iteration 5
-**Expected improvement:** Moderate. Deeper search finds moves that are safe 2-3 turns ahead, not just 1. Alpha-beta makes it affordable.
+**Snapshot:** `snapshots/haruko-f344869` (binary built from uncommitted v6 code on v5 commit)
 
 **Goal:** Extend search to configurable depth with alpha-beta pruning to cut the search tree.
 
-**Background:** Without pruning, depth-2 is 16×16 = 256 evaluations, depth-3 is 4096. Alpha-beta prunes branches that can't affect the result, typically reducing the effective branching factor from 16 to ~6-8 with good move ordering.
+**What was built:**
+- `BestMove(myID string, depth int)` — top-level max over our 4 moves
+- `minimaxMin(...)` — minimizing layer: enumerates all opponent move combos, applies Step, beta cutoff
+- `minimaxMax(...)` — maximizing layer: tries our 4 moves, alpha cutoff
+- `forEachOppCombo` callback changed to `func(map[string]Direction) bool` for early exit on pruning
+- Default depth = 3 in `main.go`
 
-**Implementation:**
-- Modify `BestMove` to accept a depth parameter
-- Implement recursive `minimax(g *GameSim, depth int, alpha, beta float64, maximizing bool, myID string) float64`
-- At depth 0 or game over: return `Evaluate()`
-- Maximizing layer: try our 4 moves
-- Minimizing layer: try opponent's 4 moves
-- Alpha-beta cutoffs in both layers
-
-**Start with depth 3.** Profile to ensure it stays under ~100ms on an 11x11 board.
-
-**Files:**
+**Files touched:**
 | File | Action |
 |------|--------|
-| `logic/search.go` | Rewrite BestMove with recursive minimax + alpha-beta |
-| `logic/search_test.go` | Add depth-specific tests, verify pruning reduces node count |
+| `logic/search.go` | Rewrite: `BestMove(myID, depth)`, `minimaxMin`, `minimaxMax`, early-exit `forEachOppCombo` |
+| `logic/search_test.go` | Updated all calls to new signature, added `TestBestMove_DepthComparison` |
+| `main.go` | `BestMove(myID)` → `BestMove(myID, 3)` |
 
-**Verify:** `make compare` against Iter 5 snapshot. Should win convincingly. Log node count per move to track search efficiency.
+**Results:**
+| Metric | Before (v5) | After (v6) |
+|--------|-------------|------------|
+| Avg turns (self-play) | ~87 | ~328 |
+| vs v2 (flood-fill) win rate | 16% | 30% (50 games) |
+| Tests | 64 | 65 |
+
+> Self-play turns nearly 4× longer — deeper search avoids short-term traps. Win rate vs v2 doubled
+> (16% → 30%) but still losing. **Root cause confirmed:** the eval function is the bottleneck, not
+> search depth. Deeper search with a bad eval just makes conservative decisions more confidently.
+> Three specific eval problems: (1) only measures our space, not relative territory — opponent can
+> control 70% of the board and we don't penalize it; (2) food urgency too weak to prevent starvation;
+> (3) enemy heads treated as fully blocked, making us overly avoidant even when we're longer.
 
 ---
 
-### Iteration 7 — Iterative Deepening + Time Management
+## Phase 3b: Eval Fix (Priority Reorder)
+
+> **Critical pivot:** The original roadmap had search optimization (iterative deepening, move ordering)
+> before eval improvements. Iterations 5-6 proved this is backwards — eval is the bottleneck.
+> Iterations 7-8 now fix the eval before returning to search optimization in Iter 9-10.
+
+### Iteration 7 — Voronoi Territory + Food Urgency (Eval Overhaul)
 
 **Status:** TODO
 **Depends on:** Iteration 6
-**Expected improvement:** Small-moderate. Guarantees we always have a move within the time limit while searching as deep as possible.
+**Expected improvement:** LARGE. This is the single most impactful change. Fixes the root cause of losing to v2.
+**Target:** Beat v2 flood-fill convincingly (>60% win rate).
 
-**Goal:** Search depth 1, then depth 2, then depth 3, etc., until the time budget (~150ms) runs out. Return the best move from the deepest completed search.
+**Why this is next (not iterative deepening):** Iteration 6 proved that deeper search with a bad eval just makes conservative decisions more confidently. The eval is the bottleneck — fix it before optimizing search.
 
-**Why?** Fixed-depth search is fragile — some positions are simple (depth 5 in 10ms) while others are complex (depth 3 takes 200ms). Iterative deepening adapts automatically.
+**Three problems to fix:**
+
+**Problem 1: Only our space is measured.** `floodFillSim` returns our reachable cell count. The opponent can control 70% of the board and we don't penalize it. v2 wins by growing longer, eating food, and cutting us off — our eval doesn't even notice.
+
+**Fix:** Voronoi territory — multi-source BFS from all snake heads simultaneously. Each cell is claimed by the first snake to reach it. Score = `myTerritory - oppTerritory`. This directly measures board control.
+
+**Problem 2: Food urgency is too weak.** At health=20, food bonus = `80*0.15/dist ≈ 4`. Space might be 40+. The snake starves because food never outweighs space.
+
+**Fix:** When health < 30, food distance dominates: `foodPenalty = -distToFood * healthWeight` where `healthWeight` scales sharply as health drops. At health=10, eating is a survival crisis, not a nice-to-have.
+
+**Problem 3: Enemy heads fully blocked in flood fill.** The current BFS marks enemy head cells as impassable. This makes us avoid space near opponents even when we're longer and should be aggressive.
+
+**Fix:** In the Voronoi BFS, both snakes expand from their heads simultaneously — enemy heads aren't "blocked", they're just the opponent's starting position. This naturally models territorial competition.
 
 **Implementation:**
-- `func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction`
-- Start at depth 1, increment depth each iteration
-- Check `time.Since(start) > budget` at the start of each depth iteration
-- Store best move from each completed depth
-- If a search at depth N completes, start depth N+1. If it doesn't complete in time, return the depth N-1 result
-- Add `context.Context` or a simple deadline check in the minimax recursion to abort early
-
-**Bonus:** The depth-1 result from iterative deepening provides a good "first guess" for move ordering in deeper searches (not implemented yet, but sets up Iteration 11).
+- **New file:** `logic/voronoi.go`
+  - `func VoronoiTerritory(g *GameSim, myID string) (myCount, oppCount int)`
+  - Multi-source BFS: seed queue with all alive snake heads at distance 0. Expand one step at a time for all snakes simultaneously. A cell is claimed by the snake that reaches it first. Ties → unclaimed.
+  - Blocked cells: interior body segments of all alive snakes (same as current flood fill). Tails are passable.
+- **Modify** `logic/eval.go`:
+  - Replace `floodFillSim` call with `VoronoiTerritory`
+  - Score: `territory = float64(myCount - oppCount)`
+  - Food urgency: when health < 40, add `foodWeight * (1.0 / float64(max(dist,1)))` where `foodWeight = float64(40 - health) * 0.5` (scales from 0 to 20 as health drops from 40 to 0)
+  - Keep existing death/win terminal scores (-1000/+1000)
 
 **Files:**
 | File | Action |
 |------|--------|
-| `logic/search.go` | Add `BestMoveIterative`, deadline checks in recursion |
-| `logic/search_test.go` | Test that it respects time budgets, returns valid moves |
-| `main.go` | Call `BestMoveIterative` with 150ms budget |
+| `logic/voronoi.go` | **New** — multi-source BFS Voronoi territory |
+| `logic/voronoi_test.go` | **New** — symmetric board (equal territory), one snake cornered (unequal), body wall partition |
+| `logic/eval.go` | Replace flood fill with Voronoi, fix food urgency scaling |
+| `logic/search_test.go` | Verify existing tests still pass (eval scores change but relative ordering should hold) |
 
-**Verify:** `make bench` — verify no timeouts in game logs. `make compare` against Iter 6 — should be comparable or slightly better.
+**Verify:**
+1. `go test ./...` — all tests pass
+2. `make bench N=10` — no panics, reasonable turns
+3. `make compare PREV=snapshots/haruko-244a28f N=100` — **must beat v2 >60%**
+4. If <60%, tune food urgency weight and territory weight before moving on
 
 ---
 
 ## Phase 4: Smarter Evaluation
 
-The evaluation function is the "brain" of the minimax. Better eval = better decisions at the same search depth. Each iteration here improves what the snake values.
+> **Why eval before search optimization?** Iterations 5-6 proved that deeper search with a bad eval
+> is counterproductive. Minimax at depth 3 with space-only eval still loses to simple flood-fill (30%
+> win rate). The eval must correctly measure board control before deeper search adds value.
 
-### Iteration 8 — Voronoi Territory Evaluation
+### Iteration 8 — Composite Eval: Length + Aggression
 
 **Status:** TODO
 **Depends on:** Iteration 7
-**Expected improvement:** Moderate-large. Voronoi measures *controlled territory* rather than just *reachable space*, giving much better positional awareness.
+**Expected improvement:** Moderate. Adds factors that territory alone misses: length advantage for head-to-head wins, and active opponent elimination.
 
-**Goal:** Replace flood fill in the evaluation with Voronoi territory — the number of cells closer to us than to any opponent.
+**Goal:** The snake should understand that being longer = safer (wins head-to-head), and should actively trap shorter opponents rather than just passively controlling space.
 
-**Background:** Flood fill counts all reachable cells, but in a 1v1, both snakes can reach most of the board. Voronoi assigns each cell to the nearest snake head (by BFS distance), so it measures who *controls* the space. A snake with 70 Voronoi cells vs 40 is winning the territorial battle.
+**Evaluation components (added to Iter 7 base):**
+1. **Length advantage**: `w_len * (myLength - oppLength)` — longer snake wins head-to-head, so growing is valuable. Suggested `w_len = 2.0`.
+2. **Head-to-head pressure**: If we're longer and our head is adjacent to the opponent's head, bonus (we threaten a kill). If shorter, penalty (we're in danger). `w_h2h * (1 if longer, -1 if shorter) * (1 if adjacent, 0 if not)`. Suggested `w_h2h = 5.0`.
+3. **Opponent safe moves**: Count how many of the opponent's 4 moves don't immediately die (wall/body). If 0, forced kill → big bonus (+50). If 1, near-kill → moderate bonus (+15). This helps the search see traps at shallow depth.
 
-**Implementation:**
-- **New file:** `logic/voronoi.go`
-- `func (g *GameSim) Voronoi(myID string) (myTerritory, opponentTerritory int)`
-- Multi-source BFS: seed queue with all living snake heads, expand simultaneously. Each cell is claimed by the first snake to reach it. Ties go unclaimed (neutral).
-- Use in `Evaluate()`: `score = myTerritory - opponentTerritory`
+**Key constraint:** Territory (from Voronoi) should remain the dominant factor (weight ~10). Length and aggression are secondary signals (weight 2-5). Food urgency from Iter 7 stays as-is.
 
 **Files:**
 | File | Action |
 |------|--------|
-| `logic/voronoi.go` | **New** — multi-source BFS Voronoi |
-| `logic/voronoi_test.go` | **New** — symmetric board, one snake cornered, partition |
-| `logic/eval.go` | Use Voronoi instead of FloodFill |
+| `logic/eval.go` | Add length advantage, head-to-head pressure, opponent safe-move count |
+| `logic/eval_test.go` | Test each new component: longer-vs-shorter scoring, cornered opponent detection |
 
-**Verify:** `make compare` against Iter 7 snapshot. Expect better positional play — snake should control center and cut off opponent.
+**Verify:** `make compare PREV=<iter7-snapshot> N=100` — should see shorter games (more kills) and higher win rate.
 
 ---
 
-### Iteration 9 — Composite Evaluation Function
+## Phase 4b: Search Optimization (with good eval)
+
+> Now that the eval correctly measures board control (Voronoi + composite), deeper search actually
+> finds better moves instead of just amplifying a bad heuristic.
+
+### Iteration 9 — Iterative Deepening + Time Management
 
 **Status:** TODO
 **Depends on:** Iteration 8
-**Expected improvement:** Moderate. Multi-factor eval catches scenarios that territory alone misses (starvation risk, length advantage, food positioning).
+**Expected improvement:** Small-moderate. Guarantees we always have a move within the time limit while searching as deep as possible. Now that the eval is good, deeper search actually helps.
 
-**Goal:** Combine multiple factors into a weighted evaluation score. Tune weights by comparing snapshots.
+**Why now (not earlier):** With the bad eval from v5/v6, deeper search was counterproductive — it just amplified the eval's mistakes. Now that Voronoi + composite eval correctly measures board control, deeper search finds genuinely better moves.
 
-**Evaluation components:**
-1. **Territory** (from Voronoi): `w1 * (myTerritory - oppTerritory)`
-2. **Length advantage**: `w2 * (myLength - oppLength)` — longer snake wins head-to-head
-3. **Health safety**: penalty when health < 30, bonus when health > 70
-4. **Food proximity**: `w3 * (1.0 / distToNearestFood)` — scaled by health urgency
-5. **Center control**: small bonus for head near board center (more escape routes)
+**Goal:** Search depth 1, then depth 2, then depth 3, etc., until the time budget (~300ms) runs out. Return the best move from the deepest completed search.
 
-**Initial weights:** Start with territory dominant (w1=10, w2=3, w3 varies by health, center=1). Tune based on `make compare` results.
+**Implementation:**
+- `func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction`
+- Start at depth 1, increment depth each iteration
+- Check `time.Since(start) > budget * 0.7` before starting next depth (leave margin)
+- Store best move from each completed depth
+- If a search at depth N completes, start depth N+1. If it doesn't complete in time, return the depth N result
+- Add deadline check inside `minimaxMin`/`minimaxMax` — if time expired, return current best estimate and stop recursing
 
 **Files:**
 | File | Action |
 |------|--------|
-| `logic/eval.go` | Expand `Evaluate()` with all components |
-| `logic/eval_test.go` | **New** — test each component in isolation, verify scoring direction |
+| `logic/search.go` | Add `BestMoveIterative`, deadline checks in minimax |
+| `logic/search_test.go` | Test that it respects time budgets, returns valid moves at all depths |
+| `main.go` | Call `BestMoveIterative` with 300ms budget |
 
-**Verify:** `make compare` against Iter 8. Tweak weights if needed, re-snapshot, re-compare.
+**Verify:** `make bench` — verify no timeouts. Log achieved depth per move. `make compare` against Iter 8 — should be comparable or slightly better.
 
 ---
 
-### Iteration 10 — Aggression + Kill Detection
+### Iteration 10 — Move Ordering + Killer Heuristic
 
 **Status:** TODO
 **Depends on:** Iteration 9
-**Expected improvement:** Moderate. The snake will actively try to eliminate opponents rather than just surviving.
-
-**Goal:** Detect and exploit head-to-head collision opportunities. When we're longer, aggressively move toward the opponent's head. When shorter, avoid their head zone.
-
-**Two components:**
-
-**A. Head-to-head awareness:**
-- If our length > opponent length, moves that put our head adjacent to their head are *good* (we win the collision)
-- If our length ≤ opponent length, such moves are *bad* (we die or mutual kill)
-- Add this as a bonus/penalty in `Evaluate()`
-
-**B. Kill detection:**
-- After our move, count opponent's safe moves (moves that don't lead to wall/body collision)
-- If the opponent has 0 safe moves, that's a forced kill — max bonus
-- If the opponent has only 1 safe move, we might be able to cut it off — bonus
-- This naturally emerges from deeper search, but explicit detection helps at shallow depths
-
-**Files:**
-| File | Action |
-|------|--------|
-| `logic/eval.go` | Add head-to-head and kill-detection bonuses |
-| `logic/eval_test.go` | Test aggression scoring: longer-vs-shorter, cornered opponent |
-
-**Verify:** `make compare` — expect higher win rate, shorter average game length (kills happen earlier).
-
----
-
-## Phase 5: Search Optimization
-
-### Iteration 11 — Move Ordering
-
-**Status:** TODO
-**Depends on:** Iteration 10
-**Expected improvement:** Indirectly large. Better move ordering means alpha-beta prunes more branches, allowing deeper search in the same time budget. Net effect: searches 1-2 plies deeper.
+**Expected improvement:** Indirectly large. Better move ordering means alpha-beta prunes more, allowing 1-2 deeper plies in the same time budget. Combined with iterative deepening, this is a significant depth boost.
 
 **Goal:** Try the most promising moves first so alpha-beta cutoffs happen earlier.
 
 **Techniques:**
 1. **Previous best move first:** The best move from depth N-1 (via iterative deepening) is tried first at depth N
 2. **Killer heuristic:** Moves that caused cutoffs at the same depth in sibling nodes are tried early
-3. **Static ordering:** Moves toward center > moves toward walls. Moves toward food > moves away.
+3. **Static ordering:** Moves toward center > walls. Moves toward food when hungry.
 
 **Implementation:**
 - Add `moveOrder []Direction` parameter to minimax
@@ -418,14 +426,16 @@ The evaluation function is the "brain" of the minimax. Better eval = better deci
 | `logic/search.go` | Add move ordering logic, killer heuristic tracking |
 | `logic/search_test.go` | Verify node count decreases with ordering vs without |
 
-**Verify:** Log average depth reached per move. Compare against Iter 10 — same or better results, but searching deeper.
+**Verify:** Log average depth reached per move. Compare against Iter 9 — same or better results, but searching deeper.
 
 ---
 
-### Iteration 12 — Transposition Table + Zobrist Hashing
+## Phase 5: Advanced Search
+
+### Iteration 11 — Transposition Table + Zobrist Hashing
 
 **Status:** TODO
-**Depends on:** Iteration 11
+**Depends on:** Iteration 10
 **Expected improvement:** Moderate. Avoids re-evaluating positions reached via different move orders. Enables 1-2 additional plies of effective depth.
 
 **Goal:** Cache evaluated positions so the search never evaluates the same game state twice.
@@ -449,14 +459,14 @@ The evaluation function is the "brain" of the minimax. Better eval = better deci
 | `logic/search.go` | Integrate TT lookups and stores |
 | `logic/zobrist_test.go` | **New** — hash consistency, incremental vs full recompute |
 
-**Verify:** Log TT hit rate. `make compare` against Iter 11 — should search noticeably deeper.
+**Verify:** Log TT hit rate. `make compare` against Iter 10 — should search noticeably deeper.
 
 ---
 
-### Iteration 13 — Memory + Performance Optimization
+### Iteration 12 — Memory + Performance Optimization
 
 **Status:** TODO
-**Depends on:** Iteration 12
+**Depends on:** Iteration 11
 **Expected improvement:** Enables deeper search by reducing per-node cost. Hard to quantify in isolation — measured by search depth increase.
 
 **Goal:** Reduce allocations in the hot path (Clone, Step, Evaluate) so each minimax node is cheaper.
@@ -482,10 +492,10 @@ The evaluation function is the "brain" of the minimax. Better eval = better deci
 
 These iterations are optional and depend on how competitive the snake already is after Phase 5.
 
-### Iteration 14 — Opponent Modeling
+### Iteration 13 — Opponent Modeling
 
 **Status:** TODO (stretch)
-**Depends on:** Iteration 13
+**Depends on:** Iteration 12
 
 **Goal:** Track opponent behavior patterns across turns and bias the minimax opponent model accordingly.
 
@@ -498,10 +508,10 @@ These iterations are optional and depend on how competitive the snake already is
 
 ---
 
-### Iteration 15 — Parameter Tuning Tournament
+### Iteration 14 — Parameter Tuning Tournament
 
 **Status:** TODO (stretch)
-**Depends on:** Iteration 13
+**Depends on:** Iteration 12
 
 **Goal:** Systematically tune evaluation weights via automated tournaments.
 
@@ -525,14 +535,13 @@ Track all snapshots here for easy reference in `make compare` commands.
 | 3 | — | — | Infrastructure only, no behavioral change |
 | 4 | — | — | Infrastructure only, no behavioral change |
 | 5 | `snapshots/haruko-7d164ae` | ~87 (self-play), 16% vs v2 | 1-ply paranoid minimax; loses to flood-fill (see Iter 5 notes) |
-| 6 | | | |
-| 7 | | | |
-| 8 | | | |
-| 9 | | | |
-| 10 | | | |
-| 11 | | | |
-| 12 | | | |
-| 13 | | | |
+| 6 | `snapshots/haruko-f344869` | ~328 (self-play), 30% vs v2 | Depth-3 alpha-beta; still loses — eval is bottleneck |
+| 7 | | | Voronoi + food urgency — **must beat v2 >60%** |
+| 8 | | | Composite eval: length + aggression |
+| 9 | | | Iterative deepening |
+| 10 | | | Move ordering |
+| 11 | | | Transposition table |
+| 12 | | | Memory optimization |
 
 ---
 
@@ -548,11 +557,11 @@ logic/
   flood.go              ← Direction, FloodFill, Coord.Move            [Iter 1]
   food.go               ← Food distance heuristics                    [Iter 2]
   sim.go                ← GameSim (Clone, Step, full rules)           [Iter 3-4]
-  search.go             ← Minimax, alpha-beta, iterative deepening    [Iter 5-7]
-  eval.go               ← Evaluation function (composite scoring)     [Iter 5, 9-10]
-  voronoi.go            ← Multi-source BFS territory counting         [Iter 8]
-  zobrist.go            ← Zobrist hashing for positions               [Iter 12]
-  ttable.go             ← Transposition table                         [Iter 12]
+  search.go             ← Minimax, alpha-beta, iterative deepening    [Iter 5-6, 9-10]
+  eval.go               ← Evaluation function (composite scoring)     [Iter 5, 7-8]
+  voronoi.go            ← Multi-source BFS territory counting         [Iter 7]
+  zobrist.go            ← Zobrist hashing for positions               [Iter 11]
+  ttable.go             ← Transposition table                         [Iter 11]
 
 cmd/bench/main.go       ← Benchmark runner (already exists)
 ```
