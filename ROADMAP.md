@@ -19,8 +19,8 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iteration 3 |
-| **Next** | Iteration 4 |
+| **Completed** | Iteration 4 |
+| **Next** | Iteration 5 |
 | **Baseline** | v0 random safe-move: ~68 avg turns (self-play) |
 | **Current** | v2 food-seeking: 95% win rate vs v1, ~28 avg turns (self-play) |
 
@@ -144,48 +144,46 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 
 ---
 
-### Iteration 4 — Game Simulator Rules
+### Iteration 4 — Game Simulator Rules ✅
 
-**Status:** TODO
+**Status:** DONE
 **Depends on:** Iteration 3
-**Expected improvement:** None directly (infrastructure). Verified by comprehensive unit tests.
 
 **Goal:** Complete the simulator so it matches official Battlesnake rules for Standard mode. After this iteration, `GameSim.Step(moves)` produces the same result as the official engine.
 
-**Rules to implement (in order, matching official rule resolution):**
+**What was built:**
+- `HazardDamage = 14` constant
+- `SimSnake.IsAlive()` — checks `EliminatedCause == ""`
+- `GameSim.IsOver()` — returns true when fewer than 2 snakes alive
+- `GameSim.Step(moves map[string]Direction)` — full turn execution in 7 phases:
+  1. **Save tails** (by snake index, not map — zero extra allocation)
+  2. **Move snakes** (reuses `MoveSnakes` from Iter 3)
+  3. **Reduce health** by 1 for each alive, moved snake
+  4. **Hazard damage** — subtract `HazardDamage` (14) if head is on a hazard coord
+  5. **Feed snakes** — head on food: health=100, length++, append saved tail. Guarded by `moves` map (unmoved snakes can't eat). Two snakes can eat the same food. Eaten food removed via backwards swap-and-truncate.
+  6. **Eliminate snakes** (simultaneous — collect all, apply at end):
+     - 5a: Health ≤ 0 → `"starvation"`
+     - 5b: Head out of bounds → `"wall"`
+     - 5c: Head on any body segment (index > 0, including self) → `"body-collision"`
+     - 5d: Head-to-head (2+ heads same cell) → shorter dies `"head-collision"`, equal length all die. Only snakes surviving 5a-5c participate.
+  7. **Increment turn**
 
-1. **Move snakes** — advance heads, pop tails (from Iter 3)
-2. **Reduce health** — decrement health by 1 for each living snake
-3. **Hazard damage** — if a snake's head is on a hazard, apply additional damage (default 14/turn in standard)
-4. **Feed snakes** — if head is on food: restore health to 100, increment length, don't pop tail (grow). Remove the food from the board.
-5. **Eliminate snakes** — check in order:
-   - Health ≤ 0 → eliminated (starvation / hazard)
-   - Head out of bounds → eliminated (wall)
-   - Head collides with any snake body (not head) → eliminated (body collision)
-   - Head-to-head collision: if two+ snakes' heads occupy same cell, shorter snake(s) eliminated; if equal length, all eliminated
-6. **Remove eliminated snakes** from future processing (but keep in Snakes slice with EliminatedCause set for eval purposes)
-
-**Implementation:**
-- `func (g *GameSim) Step(moves map[string]Direction)` — runs all phases above in order
-- `func (g *GameSim) IsOver() bool` — fewer than 2 snakes alive (or our snake is dead)
-- `func (s *SimSnake) IsAlive() bool`
-
-**Testing focus:** This is the most bug-prone iteration. Tests should cover:
-- Snake eats food → grows, health restored
-- Snake starves → eliminated
-- Wall collision → eliminated
-- Body collision → eliminated
-- Head-to-head: longer wins, equal both die
-- Hazard damage stacks with normal health loss
-- Multiple events in one turn (eat food on hazard, head-to-head while eating, etc.)
+**Design decisions:**
+- Eliminated snakes stay in `Snakes` slice with `EliminatedCause` set — needed for eval in later iterations
+- Body collision checks run against grown bodies (feeding before elimination matches official rules)
+- Feeding guarded by `moves` map — unmoved snakes can't eat, matching official engine behavior
 
 **Files:**
 | File | Action |
 |------|--------|
-| `logic/sim.go` | Add `Step()`, `IsOver()`, elimination logic |
-| `logic/sim_test.go` | Comprehensive rule tests (aim for 15-20 test cases) |
+| `logic/sim.go` | Added `HazardDamage`, `IsAlive()`, `Step()`, `IsOver()` |
+| `logic/sim_test.go` | 20 new tests covering all rule scenarios |
 
-**Verify:** `go test ./logic/ -run TestSim -v -count=1`. No benchmark change expected. Consider adding a fuzz test or replay test against known game logs.
+**Results:**
+| Metric | Value |
+|--------|-------|
+| New tests | 20 (total: 57) |
+| Behavioral change | None (infrastructure only) |
 
 ---
 
@@ -514,7 +512,7 @@ Track all snapshots here for easy reference in `make compare` commands.
 | 1 | `snapshots/haruko-244a28f` | ~78 (self-play) | Flood fill + space-aware |
 | 2 | `snapshots/haruko-244a28f` | ~28 (self-play) | Food-seeking heuristic, 95% vs v1 |
 | 3 | — | — | Infrastructure only, no behavioral change |
-| 4 | | | |
+| 4 | — | — | Infrastructure only, no behavioral change |
 | 5 | | | |
 | 6 | | | |
 | 7 | | | |
