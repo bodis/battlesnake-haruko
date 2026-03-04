@@ -30,19 +30,13 @@ type GameSim struct {
 	Turn          int
 }
 
-// NewGameSim creates a GameSim with deep-copied slices.
-func NewGameSim(width, height int, snakes []SimSnake, food, hazards []Coord) *GameSim {
-	gs := &GameSim{
-		Width:  width,
-		Height: height,
-		Turn:   0,
-	}
-
-	gs.Snakes = make([]SimSnake, len(snakes))
-	for i, s := range snakes {
+// cloneSnakes deep-copies a SimSnake slice so no body backing arrays are shared.
+func cloneSnakes(src []SimSnake) []SimSnake {
+	dst := make([]SimSnake, len(src))
+	for i, s := range src {
 		body := make([]Coord, len(s.Body))
 		copy(body, s.Body)
-		gs.Snakes[i] = SimSnake{
+		dst[i] = SimSnake{
 			ID:              s.ID,
 			Body:            body,
 			Health:          s.Health,
@@ -50,44 +44,38 @@ func NewGameSim(width, height int, snakes []SimSnake, food, hazards []Coord) *Ga
 			EliminatedCause: s.EliminatedCause,
 		}
 	}
+	return dst
+}
 
-	gs.Food = make([]Coord, len(food))
-	copy(gs.Food, food)
-
-	gs.Hazards = make([]Coord, len(hazards))
-	copy(gs.Hazards, hazards)
-
-	return gs
+// NewGameSim creates a GameSim with deep-copied slices.
+func NewGameSim(width, height int, snakes []SimSnake, food, hazards []Coord) *GameSim {
+	f := make([]Coord, len(food))
+	copy(f, food)
+	h := make([]Coord, len(hazards))
+	copy(h, hazards)
+	return &GameSim{
+		Width:   width,
+		Height:  height,
+		Snakes:  cloneSnakes(snakes),
+		Food:    f,
+		Hazards: h,
+	}
 }
 
 // Clone returns a deep copy of the GameSim with no shared backing arrays.
 func (gs *GameSim) Clone() *GameSim {
-	c := &GameSim{
-		Width:  gs.Width,
-		Height: gs.Height,
-		Turn:   gs.Turn,
+	f := make([]Coord, len(gs.Food))
+	copy(f, gs.Food)
+	h := make([]Coord, len(gs.Hazards))
+	copy(h, gs.Hazards)
+	return &GameSim{
+		Width:   gs.Width,
+		Height:  gs.Height,
+		Turn:    gs.Turn,
+		Snakes:  cloneSnakes(gs.Snakes),
+		Food:    f,
+		Hazards: h,
 	}
-
-	c.Snakes = make([]SimSnake, len(gs.Snakes))
-	for i, s := range gs.Snakes {
-		body := make([]Coord, len(s.Body))
-		copy(body, s.Body)
-		c.Snakes[i] = SimSnake{
-			ID:              s.ID,
-			Body:            body,
-			Health:          s.Health,
-			Length:          s.Length,
-			EliminatedCause: s.EliminatedCause,
-		}
-	}
-
-	c.Food = make([]Coord, len(gs.Food))
-	copy(c.Food, gs.Food)
-
-	c.Hazards = make([]Coord, len(gs.Hazards))
-	copy(c.Hazards, gs.Hazards)
-
-	return c
 }
 
 // MoveSnakes applies the given moves to each alive snake.

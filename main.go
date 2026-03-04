@@ -43,7 +43,8 @@ func coordsToLogic(in []Coord) []logic.Coord {
 }
 
 // gameSimFromState converts the API GameState into a logic.GameSim for
-// simulation / minimax search.
+// simulation / minimax search. Builds the struct directly to avoid a
+// redundant deep-copy through NewGameSim (caller already owns fresh slices).
 func gameSimFromState(state GameState) *logic.GameSim {
 	snakes := make([]logic.SimSnake, len(state.Board.Snakes))
 	for i, s := range state.Board.Snakes {
@@ -58,13 +59,14 @@ func gameSimFromState(state GameState) *logic.GameSim {
 			Length: s.Length,
 		}
 	}
-	return logic.NewGameSim(
-		state.Board.Width,
-		state.Board.Height,
-		snakes,
-		coordsToLogic(state.Board.Food),
-		coordsToLogic(state.Board.Hazards),
-	)
+	return &logic.GameSim{
+		Width:   state.Board.Width,
+		Height:  state.Board.Height,
+		Snakes:  snakes,
+		Food:    coordsToLogic(state.Board.Food),
+		Hazards: coordsToLogic(state.Board.Hazards),
+		Turn:    state.Turn,
+	}
 }
 
 
