@@ -467,7 +467,7 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 
 **Status:** DONE
 **Depends on:** Iteration 10
-**Snapshot:** `snapshots/haruko-<TBD>`
+**Snapshot:** `snapshots/haruko-0bf91d3`
 
 **Goal:** Cache evaluated positions so the search never evaluates the same game state twice.
 
@@ -575,7 +575,7 @@ Track all snapshots here for easy reference in `make compare` commands.
 | 8 | `snapshots/haruko-85b3726` | ~330 (self-play), 88% vs v7 | Composite eval: length + aggression + confinement |
 | 9 | `snapshots/haruko-83cd760` | ~306 (self-play), 76% vs v8 | Iterative deepening (300ms, max depth 5) |
 | 10 | `snapshots/haruko-c12e218` | ~417 (self-play), 54% vs v9, 75% vs v8 | Move ordering + killer heuristic |
-| 11 | `snapshots/haruko-<TBD>` | ~197 (self-play), 65% vs v10 | Transposition table + Zobrist hashing, maxDepth 5→6 |
+| 11 | `snapshots/haruko-0bf91d3` | ~197 (self-play), 65% vs v10 | Transposition table + Zobrist hashing, maxDepth 5→6 |
 | 12 | | | Memory optimization |
 
 ---
