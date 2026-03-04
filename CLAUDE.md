@@ -40,7 +40,7 @@ Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 
 
 **Note:** Paranoid minimax degrades at depth 7+ (assumes perfect opponent coordination, becomes overly pessimistic). Max depth 6 is the sweet spot.
 
-**Next:** snake appearance tuning, explore Best-Reply Search or MaxN to enable deeper search.
+**Next:** Iter 12 — Best-Reply Search (replace paranoid minimax to break depth 6 ceiling, target depth 10-12). Then quiescence search (Iter 13), perf optimization (Iter 14), parameter tuning (Iter 15).
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 is available at `/Users/bodist/go/bin/gopls`. Use it when appropriate:

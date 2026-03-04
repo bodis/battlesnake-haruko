@@ -23,7 +23,7 @@
 | **Next** | Iteration 12 |
 | **Baseline** | v0 random safe-move: ~68 avg turns (self-play) |
 | **Current** | v11 transposition table + Zobrist hashing; ~197 avg turns self-play, 65% vs v10 |
-| **Key insight** | TT enables depth 6 (up from 5). Paranoid minimax degrades at depth 7+ — need algorithm change for further depth gains. |
+| **Key insight** | TT enables depth 6 (up from 5). Paranoid minimax degrades at depth 7+ — need algorithm change (Best-Reply Search) for further depth gains. |
 
 ---
 
@@ -498,63 +498,122 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 
 ---
 
-### Iteration 12 — Memory + Performance Optimization
+### Iteration 12 — Best-Reply Search (Algorithm Change)
 
 **Status:** TODO
 **Depends on:** Iteration 11
-**Expected improvement:** Enables deeper search by reducing per-node cost. Hard to quantify in isolation — measured by search depth increase.
 
-**Goal:** Reduce allocations in the hot path (Clone, Step, Evaluate) so each minimax node is cheaper.
+**Goal:** Replace paranoid minimax with Best-Reply Search (BRS) to break the depth 6 ceiling.
+
+**Why:** Paranoid minimax assumes all opponents move simultaneously and coordinate perfectly. At depth 7+ this produces catastrophically pessimistic play (see Findings). BRS alternates turns: our move → opponent's move → our move → ..., which has two effects:
+1. **Branching factor drops:** From `4 × 4^N_opponents` (16 for 1v1) to `4` per ply. Depth 10-12 becomes reachable in 300ms.
+2. **Pessimism reduced:** Opponents optimize independently, not as a coordinated team. Deep search produces realistic predictions instead of worst-case paranoia.
+
+**Approach:**
+- Replace `minimaxMin`/`minimaxMax` with an alternating-turn search where the "current player" rotates each ply.
+- In 1v1: ply 0 = our move, ply 1 = opponent move, ply 2 = our move, ...
+- Accumulate moves for all snakes, call `Step` once per "round" (every N_snakes plies) — matches actual simultaneous movement.
+- TT, killer heuristic, and iterative deepening remain — they're algorithm-agnostic.
+- Raise `maxDepth` to 10-12 (test empirically for sweet spot).
+- Keep paranoid minimax available behind a flag for A/B comparison.
+
+**Files:**
+| File | Action |
+|------|--------|
+| `logic/search.go` | New BRS search function, refactor iterative deepening to use it |
+| `logic/search_test.go` | Tests for BRS: known positions, depth comparison, verify it beats paranoid at depth 8+ |
+
+**Verify:** `make compare PREV=snapshots/haruko-0bf91d3 N=100` — target 60%+ win rate vs v11.
+
+---
+
+## Phase 6: Search Refinement
+
+> With BRS unlocking deeper search, the next priorities are fixing the horizon effect,
+> then optimizing per-node cost (which now matters since deeper search = more nodes).
+
+### Iteration 13 — Quiescence Search + Eval Hardening
+
+**Status:** TODO
+**Depends on:** Iteration 12
+
+**Goal:** Don't stop evaluation mid-combat. When the search reaches max depth in a tactically volatile position (adjacent heads, imminent trap), extend the search until the position is "quiet."
+
+**Why:** With BRS enabling depth 10+, the horizon effect becomes the new problem. The search might stop right before a head-to-head collision or a trap closes, producing a misleading eval. Quiescence search is the standard fix.
+
+**Approach:**
+- At leaf nodes, check if the position is "quiet": no adjacent heads within distance 2, no snake with 0-1 safe moves.
+- If not quiet, extend search by 1-2 plies (quiescence plies) with a reduced move set (only "forcing" moves — moves toward the opponent's head or moves that reduce opponent safe moves).
+- Cap quiescence depth at +2 to avoid explosion.
+- Also generalize eval for N opponents (current eval assumes 2-snake game with `var opp *SimSnake` picking only the first opponent).
+
+**Files:**
+| File | Action |
+|------|--------|
+| `logic/search.go` | Add quiescence extension at leaf nodes |
+| `logic/eval.go` | Generalize to N opponents (sum territory vs all, aggregate confinement) |
+
+**Verify:** `make compare` vs Iter 12 snapshot.
+
+---
+
+### Iteration 14 — Performance Optimization
+
+**Status:** TODO
+**Depends on:** Iteration 13
+
+**Goal:** Reduce allocations in the hot path (Clone, Step, Evaluate) so each node is cheaper, squeezing 1-2 extra plies within the 300ms budget.
+
+**Why now (not earlier):** Under paranoid minimax at depth 6, the search finished within budget — making nodes cheaper just meant finishing faster with unused time. Now that BRS enables depth 10-12, per-node cost directly translates to extra plies. Every ~4× speedup = +1 ply.
 
 **Techniques:**
-1. **`sync.Pool` for GameSim clones:** Pool pre-allocated GameSim structs, reset and reuse instead of allocating
-2. **Pre-allocated slice backing arrays:** Clone uses `copy()` into pooled slices instead of `make()`
-3. **Avoid map allocations in Step:** Use fixed-size arrays for move maps (4 snakes max × 4 directions)
-4. **Profile-guided:** Run `go tool pprof` on a bench run, fix the top 3 allocation hotspots
+1. **Profile first:** `go tool pprof` on a bench run under BRS, fix the top 3 allocation hotspots
+2. **`sync.Pool` for GameSim clones:** Pool pre-allocated GameSim structs, reset and reuse instead of allocating
+3. **Pre-allocated slice backing arrays:** Clone uses `copy()` into pooled slices instead of `make()`
+4. **Avoid map allocations in Step/search:** Use fixed-size arrays for move maps (4 snakes max × 4 directions)
 
 **Files:**
 | File | Action |
 |------|--------|
 | `logic/sim.go` | Add `sync.Pool`, optimize Clone/Step allocations |
-| `logic/pool.go` | **New** (if needed) — pool management |
-| `logic/search.go` | Use pooled GameSim in minimax loop |
+| `logic/search.go` | Replace map allocations with arrays |
 
 **Verify:** `go test -bench . -benchmem ./logic/` before and after. `make compare` to confirm no regression.
 
 ---
 
-## Phase 6: Advanced (Stretch Goals)
+### Iteration 15 — Parameter Tuning Tournament
 
-These iterations are optional and depend on how competitive the snake already is after Phase 5.
+**Status:** TODO
+**Depends on:** Iteration 14
 
-### Iteration 13 — Opponent Modeling
+**Goal:** Systematically tune evaluation weights for the BRS-based search.
 
-**Status:** TODO (stretch)
-**Depends on:** Iteration 12
+**Why deferred:** Weights tuned for paranoid minimax at depth 6 won't be optimal for BRS at depth 12. Territory weight, h2h pressure, confinement bonuses — all need re-calibration for the deeper, less pessimistic search.
 
-**Goal:** Track opponent behavior patterns across turns and bias the minimax opponent model accordingly.
-
-- Track opponent's last N moves and detected style (aggressive, defensive, random)
-- Weight the minimax opponent moves by observed probability instead of assuming worst case
-- If opponent tends to chase food, predict food-seeking moves
-- If opponent plays randomly, search shallower (save time) since opponent isn't dangerous
-
-**Risk:** Over-fitting to opponent patterns can backfire if they change strategy. Keep the worst-case assumption as a fallback.
-
----
-
-### Iteration 14 — Parameter Tuning Tournament
-
-**Status:** TODO (stretch)
-**Depends on:** Iteration 12
-
-**Goal:** Systematically tune evaluation weights via automated tournaments.
-
-- Create a parameter config struct with all weights
+**Approach:**
+- Create a parameter config struct with all eval weights
 - Run round-robin tournaments: current best vs variations (±20% on each weight)
 - Hill-climbing: keep the winner, vary again
 - Use `make bench` infrastructure with different configs loaded via env vars or flags
 - Target: 500+ games per config pair for statistical significance
+
+---
+
+### Iteration 16 — Endgame Detection (Stretch)
+
+**Status:** TODO (stretch)
+**Depends on:** Iteration 12
+
+**Goal:** When the board is partitioned (Voronoi territories don't overlap), switch from combat mode to space-filling mode.
+
+**Why:** In late-game positions where snakes are separated by bodies/walls, the search wastes time modeling an opponent who can't interact with us. Detecting this and switching to a space-filling strategy would dramatically improve endgame survival.
+
+**Approach:**
+- After Voronoi BFS, check if any cell is reachable by both snakes. If not → endgame (board partitioned).
+- In endgame: greedily maximize reachable space (modified flood fill), prioritize eating food to extend health.
+- Skip minimax entirely — just pick the move that maximizes flood-fill count.
+- Consider Hamiltonian-path heuristics for space-filling efficiency.
 
 ---
 
@@ -576,7 +635,11 @@ Track all snapshots here for easy reference in `make compare` commands.
 | 9 | `snapshots/haruko-83cd760` | ~306 (self-play), 76% vs v8 | Iterative deepening (300ms, max depth 5) |
 | 10 | `snapshots/haruko-c12e218` | ~417 (self-play), 54% vs v9, 75% vs v8 | Move ordering + killer heuristic |
 | 11 | `snapshots/haruko-0bf91d3` | ~197 (self-play), 65% vs v10 | Transposition table + Zobrist hashing, maxDepth 5→6 |
-| 12 | | | Memory optimization |
+| 12 | | | Best-Reply Search (algorithm change) |
+| 13 | | | Quiescence search + eval hardening |
+| 14 | | | Performance optimization |
+| 15 | | | Parameter tuning tournament |
+| 16 | | | Endgame detection (stretch) |
 
 ---
 
@@ -616,7 +679,7 @@ server.go               ← HTTP server
 logic/
   types.go              ← Coord, Snake, Direction, AllDirections, Coord.Move  [Iter 1, cleanup]
   sim.go                ← GameSim (Clone, Step, full rules)                   [Iter 3-4]
-  search.go             ← Minimax, alpha-beta, iterative deepening            [Iter 5-6, 9-10]
+  search.go             ← Minimax, alpha-beta, iterative deepening            [Iter 5-6, 9-11, BRS planned Iter 12]
   eval.go               ← Evaluation function (Voronoi + food urgency)        [Iter 5, 7-8]
   voronoi.go            ← Multi-source BFS territory counting                 [Iter 7]
   zobrist.go            ← Zobrist hashing (snake bodies + food)                [Iter 11]
