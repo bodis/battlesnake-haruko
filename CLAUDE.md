@@ -34,3 +34,13 @@ Baseline (v1, random safe-move): avg ~68 turns.
 `make bench` manages the server lifecycle automatically; `go run ./cmd/bench` requires a server already running on the target port.
 
 **Next:** flood-fill space counting → Minimax with alpha-beta pruning.
+
+## Go LSP (gopls)
+`gopls` v0.21.1 is available at `/Users/bodist/go/bin/gopls`. Use it when appropriate:
+- **Type checking / diagnostics:** `gopls check <file.go>` — catch errors before building
+- **Find references:** `gopls references <file.go>:#offset` — where is a symbol used
+- **Definition lookup:** `gopls definition <file.go>:#offset` — jump to declaration
+- **Rename:** `gopls rename <file.go>:#offset NewName` — safe cross-file rename
+- **Hover / signature:** `gopls hover <file.go>:#offset` — type info, doc strings
+- **Symbols:** `gopls symbols <file.go>` — list all declared symbols in a file
+- **Workspace symbols:** `gopls workspace_symbol <query>` — search symbols across the module
