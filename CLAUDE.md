@@ -7,7 +7,7 @@ Battlesnake AI in Go. Module: `github.com/bodist/haruko`. Server port: 8080.
 - `logic/sim.go` — `GameSim`: full game state simulator with `Clone`, `Step`, `MoveSnakes`, `IsOver`
 - `logic/eval.go` — `Evaluate(g, myID)`: composite eval (Voronoi territory + length advantage + h2h pressure + opponent confinement + food urgency)
 - `logic/voronoi.go` — `VoronoiTerritory(g, myID)`: multi-source BFS territory counting
-- `logic/search.go` — `BestMove(myID, depth)`: paranoid minimax with alpha-beta pruning
+- `logic/search.go` — `BestMoveIterative(myID, budget)`: iterative deepening with time management; paranoid minimax with alpha-beta pruning
 - `logic/types.go` — shared types: `Coord`, `Snake`, `Direction`, `AllDirections`
 - `Makefile` — `make local` is the main dev loop (build → start server → 1v1 self-game → stop)
 
@@ -24,8 +24,8 @@ API types (`Coord`, `Battlesnake` in `models.go`) are converted to `logic.Coord`
 - `:8080` — current snake (all normal targets)
 - `:8081` — previous snapshot (`make compare`)
 
-## Current state (Iter 8)
-Depth-3 paranoid minimax with composite evaluation: Voronoi territory (dominant), length advantage, head-to-head pressure, opponent confinement, and food urgency. 88% win rate vs Iter 7 (N=100).
+## Current state (Iter 9)
+Iterative deepening with 300ms time budget, max depth 5. Searches depth 1, 2, 3, ... within budget, always has a valid move from at least depth 1. Composite evaluation: Voronoi territory (dominant), length advantage, head-to-head pressure, opponent confinement, and food urgency. 76% win rate vs Iter 8 (N=100).
 
 ## Bench / version comparison
 - `make bench [N=10]` — self-play; turns are the meaningful metric (A/B split is noise)
@@ -33,10 +33,10 @@ Depth-3 paranoid minimax with composite evaluation: Voronoi territory (dominant)
 - `-save FILE` flag writes JSONL: `{"n":1,"winner":"A","turns":42,"seed":123}` — seed replays exact game with `--seed`
 - Speed: ~100 games in 4s with 16 workers; all local, no network overhead
 
-Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330.
+Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306.
 `make bench` manages the server lifecycle automatically; `go run ./cmd/bench` requires a server already running on the target port.
 
-**Next:** iterative deepening with time budget, snake appearance tuning.
+**Next:** move ordering + killer heuristic, snake appearance tuning.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 is available at `/Users/bodist/go/bin/gopls`. Use it when appropriate:

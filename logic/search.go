@@ -1,6 +1,15 @@
 package logic
 
-import "math"
+import (
+	"math"
+	"time"
+)
+
+// searchContext carries a deadline for iterative deepening time management.
+type searchContext struct {
+	deadline time.Time
+	timedOut bool
+}
 
 // BestMove runs paranoid minimax with alpha-beta pruning to the given depth.
 // Each depth level = one simultaneous turn (our move + all opponent moves + Step).
@@ -18,7 +27,7 @@ func (g *GameSim) BestMove(myID string, depth int) Direction {
 	bestScore := math.Inf(-1)
 
 	for _, myDir := range AllDirections {
-		score := minimaxMin(g, depth, math.Inf(-1), math.Inf(1), myDir, myID, oppIDs)
+		score := minimaxMin(g, depth, math.Inf(-1), math.Inf(1), myDir, myID, oppIDs, nil)
 		if score > bestScore {
 			bestScore = score
 			bestDir = myDir
@@ -28,9 +37,63 @@ func (g *GameSim) BestMove(myID string, depth int) Direction {
 	return bestDir
 }
 
+// BestMoveIterative runs iterative deepening with a time budget.
+// It searches depth 1, 2, 3, ... and returns the best move from the deepest
+// completed search. Always has a valid move ready from at least depth 1.
+func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction {
+	var oppIDs []string
+	for i := range g.Snakes {
+		s := &g.Snakes[i]
+		if s.ID != myID && s.IsAlive() {
+			oppIDs = append(oppIDs, s.ID)
+		}
+	}
+
+	deadline := time.Now().Add(budget)
+	bestDir := Down
+
+	const maxDepth = 5
+	for depth := 1; depth <= maxDepth; depth++ {
+		// Before starting depth > 1, check if enough budget remains.
+		if depth > 1 {
+			remaining := time.Until(deadline)
+			if remaining < budget*3/10 {
+				break
+			}
+		}
+
+		ctx := &searchContext{deadline: deadline}
+		depthBest := Down
+		depthBestScore := math.Inf(-1)
+
+		for _, myDir := range AllDirections {
+			score := minimaxMin(g, depth, math.Inf(-1), math.Inf(1), myDir, myID, oppIDs, ctx)
+			if ctx.timedOut {
+				break
+			}
+			if score > depthBestScore {
+				depthBestScore = score
+				depthBest = myDir
+			}
+		}
+
+		if ctx.timedOut {
+			break
+		}
+		bestDir = depthBest
+	}
+
+	return bestDir
+}
+
 // minimaxMin is the minimizing layer: enumerates all opponent move combos,
 // applies our move + opponent moves via Step, and returns the worst-case score.
-func minimaxMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myID string, oppIDs []string) float64 {
+func minimaxMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myID string, oppIDs []string, ctx *searchContext) float64 {
+	if ctx != nil && time.Now().After(ctx.deadline) {
+		ctx.timedOut = true
+		return 0
+	}
+
 	// No opponents — just simulate our move alone.
 	if len(oppIDs) == 0 {
 		sim := g.Clone()
@@ -38,12 +101,16 @@ func minimaxMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myI
 		if depth <= 1 || sim.IsOver() {
 			return Evaluate(sim, myID)
 		}
-		return minimaxMax(sim, depth-1, alpha, beta, myID, oppIDs)
+		return minimaxMax(sim, depth-1, alpha, beta, myID, oppIDs, ctx)
 	}
 
 	worstScore := math.Inf(1)
 
 	forEachOppCombo(oppIDs, func(oppMoves map[string]Direction) bool {
+		if ctx != nil && ctx.timedOut {
+			return false
+		}
+
 		moves := make(map[string]Direction, len(oppMoves)+1)
 		for id, d := range oppMoves {
 			moves[id] = d
@@ -57,7 +124,11 @@ func minimaxMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myI
 		if depth <= 1 || sim.IsOver() {
 			val = Evaluate(sim, myID)
 		} else {
-			val = minimaxMax(sim, depth-1, alpha, beta, myID, oppIDs)
+			val = minimaxMax(sim, depth-1, alpha, beta, myID, oppIDs, ctx)
+		}
+
+		if ctx != nil && ctx.timedOut {
+			return false
 		}
 
 		if val < worstScore {
@@ -75,11 +146,19 @@ func minimaxMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myI
 
 // minimaxMax is the maximizing layer: tries each of our 4 moves and returns
 // the best score after the opponent responds (via minimaxMin).
-func minimaxMax(g *GameSim, depth int, alpha, beta float64, myID string, oppIDs []string) float64 {
+func minimaxMax(g *GameSim, depth int, alpha, beta float64, myID string, oppIDs []string, ctx *searchContext) float64 {
+	if ctx != nil && time.Now().After(ctx.deadline) {
+		ctx.timedOut = true
+		return 0
+	}
+
 	bestScore := math.Inf(-1)
 
 	for _, myDir := range AllDirections {
-		val := minimaxMin(g, depth, alpha, beta, myDir, myID, oppIDs)
+		val := minimaxMin(g, depth, alpha, beta, myDir, myID, oppIDs, ctx)
+		if ctx != nil && ctx.timedOut {
+			break
+		}
 		if val > bestScore {
 			bestScore = val
 		}

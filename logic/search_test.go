@@ -1,6 +1,9 @@
 package logic
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // makeSnake is a helper to build a SimSnake with full health.
 func makeSnake(id string, body []Coord) SimSnake {
@@ -206,6 +209,47 @@ func TestBestMove_DepthComparison(t *testing.T) {
 		if !valid {
 			t.Errorf("BestMove(depth=%d) returned invalid direction %v", depth, d)
 		}
+	}
+}
+
+// TestBestMoveIterative_ReturnsValidMove: generous budget, verify valid direction.
+func TestBestMoveIterative_ReturnsValidMove(t *testing.T) {
+	me := makeSnake("me", []Coord{{5, 5}, {5, 4}, {5, 3}})
+	opp := makeSnake("opp", []Coord{{3, 5}, {3, 6}, {3, 7}})
+	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
+
+	dir := g.BestMoveIterative("me", 500*time.Millisecond)
+	valid := dir == Up || dir == Down || dir == Left || dir == Right
+	if !valid {
+		t.Errorf("BestMoveIterative returned invalid direction %v", dir)
+	}
+}
+
+// TestBestMoveIterative_TinyBudget: 1ms budget, still returns a valid move.
+func TestBestMoveIterative_TinyBudget(t *testing.T) {
+	me := makeSnake("me", []Coord{{5, 5}, {5, 4}, {5, 3}})
+	opp := makeSnake("opp", []Coord{{3, 5}, {3, 6}, {3, 7}})
+	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
+
+	dir := g.BestMoveIterative("me", 1*time.Millisecond)
+	valid := dir == Up || dir == Down || dir == Left || dir == Right
+	if !valid {
+		t.Errorf("BestMoveIterative with tiny budget returned invalid direction %v", dir)
+	}
+}
+
+// TestBestMoveIterative_DeadEndAvoidance: same scenario as TestBestMove_DeadEndAvoidance,
+// verify iterative deepening also avoids the dead-end pocket.
+func TestBestMoveIterative_DeadEndAvoidance(t *testing.T) {
+	me := makeSnake("me", []Coord{{2, 2}, {2, 1}})
+	opp := makeSnake("opp", []Coord{
+		{4, 2}, {4, 1}, {4, 0}, {3, 0}, {3, 1}, {3, 2}, {3, 3}, {3, 4}, {4, 4}, {4, 3},
+	})
+	g := NewGameSim(5, 5, []SimSnake{me, opp}, nil, nil)
+
+	dir := g.BestMoveIterative("me", 300*time.Millisecond)
+	if dir == Right {
+		t.Errorf("BestMoveIterative picked Right (dead-end pocket), expected Up or Left")
 	}
 }
 

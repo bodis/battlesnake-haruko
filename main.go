@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"time"
 
 	"github.com/bodist/haruko/logic"
 )
@@ -27,7 +28,7 @@ func end(state GameState) {
 
 func move(state GameState) BattlesnakeMoveResponse {
 	sim := gameSimFromState(state)
-	dir := sim.BestMove(state.You.ID, 3)
+	dir := sim.BestMoveIterative(state.You.ID, 300*time.Millisecond)
 	m := logic.DirectionName(dir)
 	log.Printf("MOVE %d: %s (health=%d)\n", state.Turn, m, state.You.Health)
 	return BattlesnakeMoveResponse{Move: m}

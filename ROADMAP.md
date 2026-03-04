@@ -19,11 +19,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iteration 7 + Codebase Cleanup |
-| **Next** | Iteration 8 |
+| **Completed** | Iteration 9 |
+| **Next** | Iteration 10 |
 | **Baseline** | v0 random safe-move: ~68 avg turns (self-play) |
-| **Current** | v7 Voronoi + food urgency: 98% vs v6 (50 games); ~250 avg turns self-play (10 games) |
-| **Key insight** | Voronoi territory dominates eval. Next: length advantage + head-to-head aggression. |
+| **Current** | v9 iterative deepening (300ms budget) + composite eval; ~330 avg turns self-play |
+| **Key insight** | Iterative deepening ensures safe time management. Deeper search with good eval finds better moves. |
 
 ---
 
@@ -337,11 +337,11 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 > is counterproductive. Minimax at depth 3 with space-only eval still loses to simple flood-fill (30%
 > win rate). The eval must correctly measure board control before deeper search adds value.
 
-### Iteration 8 — Composite Eval: Length + Aggression
+### Iteration 8 — Composite Eval: Length + Aggression ✅
 
-**Status:** TODO
+**Status:** DONE
 **Depends on:** Iteration 7
-**Expected improvement:** Moderate. Adds factors that territory alone misses: length advantage for head-to-head wins, and active opponent elimination.
+**Snapshot:** `snapshots/haruko-85b3726`
 
 **Goal:** The snake should understand that being longer = safer (wins head-to-head), and should actively trap shorter opponents rather than just passively controlling space.
 
@@ -358,7 +358,14 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 | `logic/eval.go` | Add length advantage, head-to-head pressure, opponent safe-move count |
 | `logic/eval_test.go` | Test each new component: longer-vs-shorter scoring, cornered opponent detection |
 
-**Verify:** `make compare PREV=<iter7-snapshot> N=100` — should see shorter games (more kills) and higher win rate.
+**Results:**
+| Metric | Before (v7) | After (v8) |
+|--------|-------------|------------|
+| Avg turns (self-play) | ~250 | ~330 |
+| vs v7 win rate (100 games) | — | 88% |
+
+> Composite eval with length advantage, h2h pressure, and opponent confinement gives 88% win rate over
+> territory-only eval. Longer self-play turns indicate fewer premature deaths.
 
 ---
 
@@ -369,9 +376,8 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 
 ### Iteration 9 — Iterative Deepening + Time Management
 
-**Status:** TODO
+**Status:** DONE
 **Depends on:** Iteration 8
-**Expected improvement:** Small-moderate. Guarantees we always have a move within the time limit while searching as deep as possible. Now that the eval is good, deeper search actually helps.
 
 **Why now (not earlier):** With the bad eval from v5/v6, deeper search was counterproductive — it just amplified the eval's mistakes. Now that Voronoi + composite eval correctly measures board control, deeper search finds genuinely better moves.
 
@@ -392,7 +398,30 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 | `logic/search_test.go` | Test that it respects time budgets, returns valid moves at all depths |
 | `main.go` | Call `BestMoveIterative` with 300ms budget |
 
-**Verify:** `make bench` — verify no timeouts. Log achieved depth per move. `make compare` against Iter 8 — should be comparable or slightly better.
+**What was built:**
+- `searchContext` struct with deadline + timedOut flag for time management
+- `BestMoveIterative(myID, budget)` — iterative deepening loop, searches depth 1, 2, 3, ... within budget (capped at depth 5)
+- Modified `minimaxMin`/`minimaxMax` to accept optional `ctx *searchContext` — bail early on timeout
+- 300ms budget in `main.go` (leaves 200ms margin for the 500ms server timeout)
+- `BestMove` still works unchanged (passes `nil` ctx)
+- Max depth capped at 5: deeper paranoid search is counterproductive (assumes perfect opponent play, becomes overly defensive)
+
+**Results:**
+| Metric | Before (v8) | After (v9) |
+|--------|-------------|------------|
+| Avg turns (self-play, 100 games) | ~330 | ~306 |
+| vs v8 win rate (100 games) | — | **76%** |
+
+> Iterative deepening with depth cap of 5 beats fixed depth 3. Deeper search (depth 7+) was
+> counterproductive due to paranoid minimax's worst-case assumption — the opponent "plays perfectly"
+> at every level, making the snake overly defensive. The depth 5 cap balances deeper lookahead with
+> realistic opponent modeling.
+>
+> **Key insight:** Paranoid minimax has diminishing and eventually negative returns with depth.
+> Uncapped search (reaching depth 7) scored 0% vs Iter 8 — the snake saw threats everywhere and
+> froze up. Two paths to unlock deeper search: (1) move ordering (Iter 10) makes existing depth
+> more efficient; (2) switching from paranoid to a probabilistic opponent model (Iter 13) would
+> reduce the pessimism that makes deep search harmful.
 
 ---
 
@@ -531,8 +560,8 @@ Track all snapshots here for easy reference in `make compare` commands.
 | 5 | `snapshots/haruko-7d164ae` | ~87 (self-play), 16% vs v2 | 1-ply paranoid minimax; loses to flood-fill (see Iter 5 notes) |
 | 6 | `snapshots/haruko-f344869` | ~328 (self-play), 30% vs v2 | Depth-3 alpha-beta; still loses — eval is bottleneck |
 | 7 | `snapshots/haruko-3aac093` | ~250 self-play (N=10), 98% vs v6 | Voronoi territory + food urgency eval overhaul |
-| 8 | | | Composite eval: length + aggression |
-| 9 | | | Iterative deepening |
+| 8 | `snapshots/haruko-85b3726` | ~330 (self-play), 88% vs v7 | Composite eval: length + aggression + confinement |
+| 9 | `snapshots/haruko-83cd760` | ~306 (self-play), 76% vs v8 | Iterative deepening (300ms, max depth 5) |
 | 10 | | | Move ordering |
 | 11 | | | Transposition table |
 | 12 | | | Memory optimization |
