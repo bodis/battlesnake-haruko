@@ -4,7 +4,11 @@ Battlesnake AI in Go. Module: `github.com/bodist/haruko`. Server port: 8080.
 
 ## Key files
 - `main.go` — `info/start/end/move` handlers, `GameSession` map (mutex-protected with `sync.RWMutex`)
-- `logic/board.go` — `FastBoard`: flat `[]uint8` 1D grid, `GetIndex(x,y)=y*Width+x`, cell constants `CellEmpty/Food/Hazard/Snake/MySnake`
+- `logic/sim.go` — `GameSim`: full game state simulator with `Clone`, `Step`, `MoveSnakes`, `IsOver`
+- `logic/eval.go` — `Evaluate(g, myID)`: composite eval (Voronoi territory + length advantage + h2h pressure + opponent confinement + food urgency)
+- `logic/voronoi.go` — `VoronoiTerritory(g, myID)`: multi-source BFS territory counting
+- `logic/search.go` — `BestMove(myID, depth)`: paranoid minimax with alpha-beta pruning
+- `logic/types.go` — shared types: `Coord`, `Snake`, `Direction`, `AllDirections`
 - `Makefile` — `make local` is the main dev loop (build → start server → 1v1 self-game → stop)
 
 ## Rules CLI (game engine)
@@ -14,14 +18,14 @@ Run via `go tool battlesnake` — no global install, nothing in `~/go/bin`, no `
 **Policy: keep all tooling project-scoped.** Never suggest `go install` for dev tools — use `go get -tool` instead and invoke with `go tool <name>`.
 
 ## Type bridge (main.go)
-API types (`Coord`, `Battlesnake` in `models.go`) are converted to `logic.Coord` / `logic.Snake` via `coordsToLogic()` and `snakesToLogic()` before being passed to `FastBoard.Update()`. Keep this pattern when adding new logic-package functions — the logic package must not import main.
+API types (`Coord`, `Battlesnake` in `models.go`) are converted to `logic.Coord` / `logic.Snake` via `coordsToLogic()` and `snakesToLogic()` before being passed to `GameSim`. Keep this pattern when adding new logic-package functions — the logic package must not import main.
 
 ## Ports
 - `:8080` — current snake (all normal targets)
 - `:8081` — previous snapshot (`make compare`)
 
-## Current state
-Phase 1 done: server runs, FastBoard updates each turn, basic wall/body collision avoidance, random safe-move selection.
+## Current state (Iter 8)
+Depth-3 paranoid minimax with composite evaluation: Voronoi territory (dominant), length advantage, head-to-head pressure, opponent confinement, and food urgency. 88% win rate vs Iter 7 (N=100).
 
 ## Bench / version comparison
 - `make bench [N=10]` — self-play; turns are the meaningful metric (A/B split is noise)
@@ -29,11 +33,10 @@ Phase 1 done: server runs, FastBoard updates each turn, basic wall/body collisio
 - `-save FILE` flag writes JSONL: `{"n":1,"winner":"A","turns":42,"seed":123}` — seed replays exact game with `--seed`
 - Speed: ~100 games in 4s with 16 workers; all local, no network overhead
 
-Baseline (v1, random safe-move): avg ~68 turns.
-`FastBoard.Update()` does a full cell reset every turn — acceptable now, worth revisiting if move generation becomes the bottleneck.
+Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330.
 `make bench` manages the server lifecycle automatically; `go run ./cmd/bench` requires a server already running on the target port.
 
-**Next:** flood-fill space counting → Minimax with alpha-beta pruning.
+**Next:** iterative deepening with time budget, snake appearance tuning.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 is available at `/Users/bodist/go/bin/gopls`. Use it when appropriate:
