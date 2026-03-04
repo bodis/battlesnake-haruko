@@ -24,8 +24,8 @@ API types (`Coord`, `Battlesnake` in `models.go`) are converted to `logic.Coord`
 - `:8080` — current snake (all normal targets)
 - `:8081` — previous snapshot (`make compare`)
 
-## Current state (Iter 9)
-Iterative deepening with 300ms time budget, max depth 5. Searches depth 1, 2, 3, ... within budget, always has a valid move from at least depth 1. Composite evaluation: Voronoi territory (dominant), length advantage, head-to-head pressure, opponent confinement, and food urgency. 76% win rate vs Iter 8 (N=100).
+## Current state (Iter 10)
+Iterative deepening with 300ms time budget, max depth 5. PV move ordering (best move from depth N-1 tried first at depth N) + killer heuristic (2 slots per depth). Composite evaluation: Voronoi territory (dominant), length advantage, head-to-head pressure, opponent confinement, and food urgency. 54% vs Iter 9, 75% vs Iter 8 (N=100).
 
 ## Bench / version comparison
 - `make bench [N=10]` — self-play; turns are the meaningful metric (A/B split is noise)
@@ -33,10 +33,10 @@ Iterative deepening with 300ms time budget, max depth 5. Searches depth 1, 2, 3,
 - `-save FILE` flag writes JSONL: `{"n":1,"winner":"A","turns":42,"seed":123}` — seed replays exact game with `--seed`
 - Speed: ~100 games in 4s with 16 workers; all local, no network overhead
 
-Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306.
+Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 ~417.
 `make bench` manages the server lifecycle automatically; `go run ./cmd/bench` requires a server already running on the target port.
 
-**Next:** move ordering + killer heuristic, snake appearance tuning.
+**Next:** transposition table + Zobrist hashing (Iter 11), snake appearance tuning.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 is available at `/Users/bodist/go/bin/gopls`. Use it when appropriate:

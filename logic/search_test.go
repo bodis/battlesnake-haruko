@@ -253,6 +253,72 @@ func TestBestMoveIterative_DeadEndAvoidance(t *testing.T) {
 	}
 }
 
+// TestOrderedMoves_PVFirst: PV move is always first in the ordering.
+func TestOrderedMoves_PVFirst(t *testing.T) {
+	moves := orderedMoves(Right, true, [2]Direction{}, [2]bool{})
+	if moves[0] != Right {
+		t.Errorf("expected PV move Right first, got %v", DirectionName(moves[0]))
+	}
+	// All 4 directions should be present.
+	seen := map[Direction]bool{}
+	for _, d := range moves {
+		seen[d] = true
+	}
+	if len(seen) != 4 {
+		t.Errorf("expected 4 unique directions, got %d", len(seen))
+	}
+}
+
+// TestOrderedMoves_KillersBeforeDefault: killer moves come before default order.
+func TestOrderedMoves_KillersBeforeDefault(t *testing.T) {
+	moves := orderedMoves(Up, false, [2]Direction{Right, Left}, [2]bool{true, true})
+	if moves[0] != Right {
+		t.Errorf("expected killer[0] Right first, got %v", DirectionName(moves[0]))
+	}
+	if moves[1] != Left {
+		t.Errorf("expected killer[1] Left second, got %v", DirectionName(moves[1]))
+	}
+}
+
+// TestOrderedMoves_PVAndKillers: PV first, then killers, then rest.
+func TestOrderedMoves_PVAndKillers(t *testing.T) {
+	moves := orderedMoves(Left, true, [2]Direction{Right, Down}, [2]bool{true, true})
+	if moves[0] != Left {
+		t.Errorf("expected PV Left first, got %v", DirectionName(moves[0]))
+	}
+	if moves[1] != Right {
+		t.Errorf("expected killer Right second, got %v", DirectionName(moves[1]))
+	}
+	if moves[2] != Down {
+		t.Errorf("expected killer Down third, got %v", DirectionName(moves[2]))
+	}
+	if moves[3] != Up {
+		t.Errorf("expected Up last, got %v", DirectionName(moves[3]))
+	}
+}
+
+// TestOrderedMoves_NoPVNoKillers: falls back to default AllDirections order.
+func TestOrderedMoves_NoPVNoKillers(t *testing.T) {
+	moves := orderedMoves(Up, false, [2]Direction{}, [2]bool{})
+	if moves != AllDirections {
+		t.Errorf("expected default AllDirections order, got %v", moves)
+	}
+}
+
+// TestBestMoveIterative_PVOrdering: iterative deepening with PV ordering
+// still produces correct results on a scenario with a clear best move.
+func TestBestMoveIterative_PVOrdering(t *testing.T) {
+	// Same as NeckTrap — only Right is safe.
+	me := makeSnake("me", []Coord{{2, 0}, {2, 1}, {2, 2}, {2, 3}})
+	opp := makeSnake("opp", []Coord{{1, 0}, {0, 0}, {0, 1}, {0, 2}, {0, 3}})
+	g := NewGameSim(5, 5, []SimSnake{me, opp}, nil, nil)
+
+	dir := g.BestMoveIterative("me", 300*time.Millisecond)
+	if dir != Right {
+		t.Errorf("BestMoveIterative with PV ordering expected Right, got %v", DirectionName(dir))
+	}
+}
+
 // TestEvaluate_MeDead: returns -1000 when our snake is eliminated.
 func TestEvaluate_MeDead(t *testing.T) {
 	me := SimSnake{ID: "me", Body: []Coord{{0, 0}}, Health: 0, Length: 1, EliminatedCause: "starvation"}
