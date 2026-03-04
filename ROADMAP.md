@@ -19,8 +19,8 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iteration 2 |
-| **Next** | Iteration 3 |
+| **Completed** | Iteration 3 |
+| **Next** | Iteration 4 |
 | **Baseline** | v0 random safe-move: ~68 avg turns (self-play) |
 | **Current** | v2 food-seeking: 95% win rate vs v1, ~28 avg turns (self-play) |
 
@@ -113,33 +113,34 @@
 
 The game simulator is the foundation for all search-based AI. It must replicate the official Battlesnake rules exactly so that minimax can accurately predict future game states.
 
-### Iteration 3 — Game Simulator Core
+### Iteration 3 — Game Simulator Core ✅
 
-**Status:** TODO
+**Status:** DONE
 **Depends on:** Iteration 2
-**Expected improvement:** None directly (infrastructure). Verified by unit tests only.
 
 **Goal:** Build `GameSim` struct that can represent a full game state, clone itself, and apply basic snake movement (before rules resolution).
 
-**What to build:**
-- **New file:** `logic/sim.go`
-- `SimSnake` struct: `ID string`, `Body []Coord` (head-first), `Health int`, `Length int`, `EliminatedCause string`
-- `GameSim` struct: `Width, Height int`, `Snakes []SimSnake`, `Food []Coord`, `Hazards []Coord`, `Turn int`
-- `NewGameSim(width, height int, snakes []SimSnake, food, hazards []Coord) *GameSim`
-- `func (g *GameSim) Clone() *GameSim` — deep copy all slices
-- `func (g *GameSim) MoveSnakes(moves map[string]Direction)` — advance each snake's head in the given direction, remove tail segment (no rules yet, just movement)
-- Helper: `func (g *GameSim) SnakeByID(id string) *SimSnake`
-- Helper: `func GameSimFromState(...)` — construct from API types (bridge function)
-
-**Why split from rules?** Movement alone is testable and useful. We can verify cloning and movement independently before adding the complex collision/food/death logic.
+**What was built:**
+- `SimSnake` struct with `Head()` / `Tail()` accessors
+- `GameSim` struct with `Width`, `Height`, `Snakes`, `Food`, `Hazards`, `Turn`
+- `NewGameSim()` — deep-copies all input slices so GameSim owns its data
+- `Clone()` — full deep copy, no shared backing arrays
+- `MoveSnakes(moves map[string]Direction)` — in-place head advance + tail drop, zero allocation. Skips dead snakes and snakes not in map
+- `SnakeByID(id)` — linear scan, returns pointer for in-place mutation
+- `gameSimFromState()` bridge in `main.go` — converts API types to `logic.GameSim` (unused until Iter 5)
 
 **Files:**
 | File | Action |
 |------|--------|
-| `logic/sim.go` | **New** — GameSim, SimSnake, Clone, MoveSnakes |
-| `logic/sim_test.go` | **New** — clone independence, basic movement, head advances correctly |
+| `logic/sim.go` | **New** — SimSnake, GameSim, NewGameSim, Clone, MoveSnakes, SnakeByID |
+| `logic/sim_test.go` | **New** — 18 tests (init, clone, movement, SnakeByID, accessors) |
+| `main.go` | Added `gameSimFromState()` bridge |
 
-**Verify:** `go test ./logic/ -run TestSim -v`. No benchmark change expected.
+**Results:**
+| Metric | Value |
+|--------|-------|
+| New tests | 18 (total: 39) |
+| Behavioral change | None (infrastructure only) |
 
 ---
 
@@ -512,7 +513,7 @@ Track all snapshots here for easy reference in `make compare` commands.
 | 0 (baseline) | — | ~68 | Random safe-move, never snapshotted |
 | 1 | `snapshots/haruko-244a28f` | ~78 (self-play) | Flood fill + space-aware |
 | 2 | `snapshots/haruko-244a28f` | ~28 (self-play) | Food-seeking heuristic, 95% vs v1 |
-| 3 | | | |
+| 3 | — | — | Infrastructure only, no behavioral change |
 | 4 | | | |
 | 5 | | | |
 | 6 | | | |

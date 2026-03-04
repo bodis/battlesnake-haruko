@@ -163,6 +163,31 @@ func coordsToLogic(in []Coord) []logic.Coord {
 	return out
 }
 
+// gameSimFromState converts the API GameState into a logic.GameSim for
+// simulation / minimax search. Not called yet — ready for Iter 5.
+func gameSimFromState(state GameState) *logic.GameSim {
+	snakes := make([]logic.SimSnake, len(state.Board.Snakes))
+	for i, s := range state.Board.Snakes {
+		body := make([]logic.Coord, len(s.Body))
+		for j, seg := range s.Body {
+			body[j] = logic.Coord{X: seg.X, Y: seg.Y}
+		}
+		snakes[i] = logic.SimSnake{
+			ID:     s.ID,
+			Body:   body,
+			Health: s.Health,
+			Length: s.Length,
+		}
+	}
+	return logic.NewGameSim(
+		state.Board.Width,
+		state.Board.Height,
+		snakes,
+		coordsToLogic(state.Board.Food),
+		coordsToLogic(state.Board.Hazards),
+	)
+}
+
 // snakesToLogic converts API Battlesnake slice to logic.Snake slice.
 func snakesToLogic(in []Battlesnake) []logic.Snake {
 	out := make([]logic.Snake, len(in))
