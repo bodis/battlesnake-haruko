@@ -19,11 +19,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iteration 10 |
-| **Next** | Iteration 11 |
+| **Completed** | Iteration 11 |
+| **Next** | Iteration 12 |
 | **Baseline** | v0 random safe-move: ~68 avg turns (self-play) |
-| **Current** | v10 move ordering + killer heuristic; ~417 avg turns self-play |
-| **Key insight** | Move ordering is infrastructure — small direct gain (54% vs v9) but enables future depth improvements. |
+| **Current** | v11 transposition table + Zobrist hashing; ~197 avg turns self-play, 65% vs v10 |
+| **Key insight** | TT enables depth 6 (up from 5). Paranoid minimax degrades at depth 7+ — need algorithm change for further depth gains. |
 
 ---
 
@@ -463,34 +463,38 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 
 ## Phase 5: Advanced Search
 
-### Iteration 11 — Transposition Table + Zobrist Hashing
+### Iteration 11 — Transposition Table + Zobrist Hashing ✅
 
-**Status:** TODO
+**Status:** DONE
 **Depends on:** Iteration 10
-**Expected improvement:** Moderate. Avoids re-evaluating positions reached via different move orders. Enables 1-2 additional plies of effective depth.
+**Snapshot:** `snapshots/haruko-<TBD>`
 
 **Goal:** Cache evaluated positions so the search never evaluates the same game state twice.
 
-**Zobrist hashing:**
-- Pre-generate random `uint64` values for each (cell, piece-type) combination
-- Board hash = XOR of all piece hashes → O(1) incremental update on move
-- Use hash as transposition table key
-
-**Transposition table:**
-- Fixed-size hash map (e.g., 1M entries)
-- Store: hash, depth, score, best move, flag (exact/lower-bound/upper-bound)
-- On lookup: if stored depth ≥ current depth, use cached result
-- Replace strategy: always-replace (simplest, effective enough)
+**What was built:**
+- `logic/zobrist.go` — Zobrist hash tables initialized with fixed seed. `GameSim.Hash()` XORs random values for alive snake bodies (by slice index + segment index + cell) and food positions. Health, hazards, and turn excluded by design.
+- `logic/tt.go` — `TranspositionTable` with 1M entries (`1<<20`). Probe returns `(score, bestMove, hasTTMove, hit)` — `hit` requires matching hash+generation+depth+bounds; `hasTTMove` available even without score cutoff (for move ordering). Store determines flag from score vs original alpha/beta. Generation-based O(1) invalidation. Singleton reuse via `getSharedTT()` to avoid 32MB allocation per move.
+- `logic/search.go` — TT added to `searchContext`, shared across iterative deepening depths. `minimaxMax` probes TT at entry (cutoff or move ordering), stores at exit (skipped on timeout). TT bestMove used as PV in `orderedMoves` for interior nodes. Max depth raised 5→6.
 
 **Files:**
 | File | Action |
 |------|--------|
-| `logic/zobrist.go` | **New** — hash generation, incremental update |
-| `logic/ttable.go` | **New** — transposition table with lookup/store |
-| `logic/search.go` | Integrate TT lookups and stores |
-| `logic/zobrist_test.go` | **New** — hash consistency, incremental vs full recompute |
+| `logic/zobrist.go` | **New** — Zobrist hash tables, `GameSim.Hash()` |
+| `logic/zobrist_test.go` | **New** — 7 tests (consistency, clone, sensitivity, dead snake, food order) |
+| `logic/tt.go` | **New** — `TranspositionTable`, `Probe`, `Store`, `NewGeneration`, `getSharedTT` |
+| `logic/tt_test.go` | **New** — 6 tests (exact/shallow/generation/collision/lower/upper) |
+| `logic/search.go` | TT integration in `searchContext`, `minimaxMax`, `BestMoveIterative`; maxDepth 5→6 |
 
-**Verify:** Log TT hit rate. `make compare` against Iter 10 — should search noticeably deeper.
+**Results:**
+| Metric | Before (v10) | After (v11) |
+|--------|--------------|-------------|
+| Avg turns (self-play, 100 games) | ~417 | ~197 |
+| vs v10 win rate (100 games) | — | **65%** |
+| Max depth reached | 5 (always) | 6 (typically) |
+| TT hit rate | — | ~25% at depth 6 |
+
+> Shorter self-play turns = both snakes find kill sequences faster (confirmed by 65% win rate vs v10).
+> TT hit rate ~25% at depth 6 — the extra ply is what drives the win rate, not the hit rate itself.
 
 ---
 
@@ -571,8 +575,34 @@ Track all snapshots here for easy reference in `make compare` commands.
 | 8 | `snapshots/haruko-85b3726` | ~330 (self-play), 88% vs v7 | Composite eval: length + aggression + confinement |
 | 9 | `snapshots/haruko-83cd760` | ~306 (self-play), 76% vs v8 | Iterative deepening (300ms, max depth 5) |
 | 10 | `snapshots/haruko-c12e218` | ~417 (self-play), 54% vs v9, 75% vs v8 | Move ordering + killer heuristic |
-| 11 | | | Transposition table |
+| 11 | `snapshots/haruko-<TBD>` | ~197 (self-play), 65% vs v10 | Transposition table + Zobrist hashing, maxDepth 5→6 |
 | 12 | | | Memory optimization |
+
+---
+
+## Findings
+
+Key technical insights discovered during development. Reference these when planning future iterations.
+
+### Paranoid Minimax Depth Ceiling (Iter 9, confirmed Iter 11)
+Paranoid minimax assumes ALL opponents coordinate perfectly against you. This becomes increasingly unrealistic at greater depths:
+- **Depth 5-6:** Sweet spot. Opponent plays reasonably well, search finds real tactical threats.
+- **Depth 7:** Self-play avg drops to ~150 turns (from ~400). Snake becomes overly defensive.
+- **Depth 10:** Catastrophic — avg ~18 turns. The search concludes "I'm dead no matter what" and makes essentially random moves.
+- **Root cause:** At depth N, the opponent has N plies of "perfect" play. By depth 7+, even safe positions look fatal because the imagined opponent can always find a lethal sequence given enough moves.
+- **Implication:** To benefit from deeper search, the algorithm must change. Best-Reply Search (only one opponent moves per ply) or MaxN (each player maximizes their own score) would reduce pessimism.
+
+### TT Allocation Matters (Iter 11)
+A `TranspositionTable` with 1M entries is ~32MB. Allocating this every 300ms move call creates GC pressure that can negate the TT's benefits. Solution: singleton with generation-based invalidation.
+
+### TT Value Depends on Depth Headroom (Iter 11)
+At maxDepth=5, the TT saved ~8% of work but the search always finished within budget — savings were wasted (same result, just faster). Raising maxDepth to 6 let the TT's savings translate into an actual extra ply, producing a 65% win rate vs the previous version.
+
+### Self-Play Turns ≠ Strength (Iter 11)
+Shorter self-play games can mean STRONGER play (both snakes find kills faster), not weaker. When self-play avg drops, always verify with `make compare` against a snapshot. v11's ~197 turns (vs v10's ~417) initially looked like a regression but was actually a 65% win rate improvement.
+
+### Eval > Search Depth (Iter 5-7)
+Deeper search with a bad eval is counterproductive. v6 (depth 3, space-only eval) lost to v2 (flood-fill heuristic). Only after Voronoi territory eval (v7) did deeper search add value. Always fix the eval before optimizing search.
 
 ---
 
@@ -589,8 +619,8 @@ logic/
   search.go             ← Minimax, alpha-beta, iterative deepening            [Iter 5-6, 9-10]
   eval.go               ← Evaluation function (Voronoi + food urgency)        [Iter 5, 7-8]
   voronoi.go            ← Multi-source BFS territory counting                 [Iter 7]
-  zobrist.go            ← Zobrist hashing for positions                       [Iter 11]
-  ttable.go             ← Transposition table                                 [Iter 11]
+  zobrist.go            ← Zobrist hashing (snake bodies + food)                [Iter 11]
+  tt.go                 ← Transposition table (probe/store/generation)        [Iter 11]
 
 cmd/bench/main.go       ← Benchmark runner (already exists)
 ```

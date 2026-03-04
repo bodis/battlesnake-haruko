@@ -5,17 +5,18 @@ import (
 	"time"
 )
 
-const maxDepth = 5
+const maxDepth = 6
 
 // killerTable stores up to 2 killer moves per depth level.
 type killerTable [maxDepth + 1][2]Direction
 
-// searchContext carries a deadline and killer move table for iterative deepening.
+// searchContext carries a deadline, killer move table, and transposition table.
 type searchContext struct {
 	deadline   time.Time
 	timedOut   bool
 	killers    killerTable
 	hasKillers [maxDepth + 1][2]bool
+	tt         *TranspositionTable
 }
 
 // storeKiller records a move that caused a beta cutoff at the given depth.
@@ -102,6 +103,8 @@ func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction
 		}
 	}
 
+	tt := getSharedTT()
+	tt.NewGeneration()
 	deadline := time.Now().Add(budget)
 	bestDir := Down
 	pvMove := Down
@@ -116,7 +119,7 @@ func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction
 			}
 		}
 
-		ctx := &searchContext{deadline: deadline}
+		ctx := &searchContext{deadline: deadline, tt: tt}
 		depthBest := Down
 		depthBestScore := math.Inf(-1)
 
@@ -209,11 +212,27 @@ func minimaxMax(g *GameSim, depth int, alpha, beta float64, myID string, oppIDs 
 		return 0
 	}
 
+	alpha0 := alpha
+	var hash uint64
+	var ttMove Direction
+	hasTTMove := false
+
+	if ctx != nil && ctx.tt != nil {
+		hash = g.Hash()
+		score, move, hasMove, hit := ctx.tt.Probe(hash, depth, alpha, beta)
+		if hit {
+			return score
+		}
+		ttMove = move
+		hasTTMove = hasMove
+	}
+
 	bestScore := math.Inf(-1)
+	bestMove := Down
 
 	var moves [4]Direction
 	if ctx != nil && depth <= maxDepth {
-		moves = orderedMoves(Down, false, ctx.killers[depth], ctx.hasKillers[depth])
+		moves = orderedMoves(ttMove, hasTTMove, ctx.killers[depth], ctx.hasKillers[depth])
 	} else {
 		moves = AllDirections
 	}
@@ -225,6 +244,7 @@ func minimaxMax(g *GameSim, depth int, alpha, beta float64, myID string, oppIDs 
 		}
 		if val > bestScore {
 			bestScore = val
+			bestMove = myDir
 		}
 		if val > alpha {
 			alpha = val
@@ -236,6 +256,11 @@ func minimaxMax(g *GameSim, depth int, alpha, beta float64, myID string, oppIDs 
 			}
 			break
 		}
+	}
+
+	// Store in TT (skip on timeout — partial results are unreliable).
+	if ctx != nil && ctx.tt != nil && !ctx.timedOut {
+		ctx.tt.Store(hash, depth, bestScore, bestMove, alpha0, beta)
 	}
 
 	return bestScore

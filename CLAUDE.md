@@ -7,7 +7,9 @@ Battlesnake AI in Go. Module: `github.com/bodist/haruko`. Server port: 8080.
 - `logic/sim.go` — `GameSim`: full game state simulator with `Clone`, `Step`, `MoveSnakes`, `IsOver`
 - `logic/eval.go` — `Evaluate(g, myID)`: composite eval (Voronoi territory + length advantage + h2h pressure + opponent confinement + food urgency)
 - `logic/voronoi.go` — `VoronoiTerritory(g, myID)`: multi-source BFS territory counting
-- `logic/search.go` — `BestMoveIterative(myID, budget)`: iterative deepening with time management; paranoid minimax with alpha-beta pruning
+- `logic/search.go` — `BestMoveIterative(myID, budget)`: iterative deepening with time management; paranoid minimax with alpha-beta pruning + transposition table
+- `logic/zobrist.go` — `GameSim.Hash()`: Zobrist hashing (snake bodies + food)
+- `logic/tt.go` — `TranspositionTable`: probe/store with generation-based invalidation
 - `logic/types.go` — shared types: `Coord`, `Snake`, `Direction`, `AllDirections`
 - `Makefile` — `make local` is the main dev loop (build → start server → 1v1 self-game → stop)
 
@@ -24,8 +26,8 @@ API types (`Coord`, `Battlesnake` in `models.go`) are converted to `logic.Coord`
 - `:8080` — current snake (all normal targets)
 - `:8081` — previous snapshot (`make compare`)
 
-## Current state (Iter 10)
-Iterative deepening with 300ms time budget, max depth 5. PV move ordering (best move from depth N-1 tried first at depth N) + killer heuristic (2 slots per depth). Composite evaluation: Voronoi territory (dominant), length advantage, head-to-head pressure, opponent confinement, and food urgency. 54% vs Iter 9, 75% vs Iter 8 (N=100).
+## Current state (Iter 11)
+Iterative deepening with 300ms time budget, max depth 6. Transposition table (Zobrist hashing, 1M entries, generation-based invalidation) shared across iterative deepening depths — ~25% hit rate at depth 6, enabling 1 extra ply vs Iter 10. PV move ordering from TT + killer heuristic. Composite evaluation: Voronoi territory (dominant), length advantage, head-to-head pressure, opponent confinement, and food urgency. 65% vs Iter 10 (N=100).
 
 ## Bench / version comparison
 - `make bench [N=10]` — self-play; turns are the meaningful metric (A/B split is noise)
@@ -33,10 +35,12 @@ Iterative deepening with 300ms time budget, max depth 5. PV move ordering (best 
 - `-save FILE` flag writes JSONL: `{"n":1,"winner":"A","turns":42,"seed":123}` — seed replays exact game with `--seed`
 - Speed: ~100 games in 4s with 16 workers; all local, no network overhead
 
-Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 ~417.
+Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 ~417, v11 ~197.
 `make bench` manages the server lifecycle automatically; `go run ./cmd/bench` requires a server already running on the target port.
 
-**Next:** transposition table + Zobrist hashing (Iter 11), snake appearance tuning.
+**Note:** Paranoid minimax degrades at depth 7+ (assumes perfect opponent coordination, becomes overly pessimistic). Max depth 6 is the sweet spot.
+
+**Next:** snake appearance tuning, explore Best-Reply Search or MaxN to enable deeper search.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 is available at `/Users/bodist/go/bin/gopls`. Use it when appropriate:
