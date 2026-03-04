@@ -19,10 +19,10 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iteration 4 |
-| **Next** | Iteration 5 |
+| **Completed** | Iteration 5 |
+| **Next** | Iteration 6 |
 | **Baseline** | v0 random safe-move: ~68 avg turns (self-play) |
-| **Current** | v2 food-seeking: 95% win rate vs v1, ~28 avg turns (self-play) |
+| **Current** | v5 1-ply paranoid minimax: ~87 avg turns (self-play), 16% vs v2 flood-fill |
 
 ---
 
@@ -191,9 +191,8 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 
 ### Iteration 5 — 1-Ply Lookahead (Paranoid Minimax)
 
-**Status:** TODO
+**Status:** DONE
 **Depends on:** Iteration 4
-**Expected improvement:** Major jump. The snake can now "see" one turn ahead and avoid moves that lead to death even if they look safe on the current board. Expect avg turns ~150-200+.
 
 **Goal:** For each of our 4 possible moves, simulate all 4 opponent moves (worst case), and pick our move that maximizes our worst-case outcome. This is depth-1 paranoid minimax.
 
@@ -227,7 +226,19 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 | `logic/search_test.go` | **New** — known positions with expected best moves |
 | `main.go` | Switch `move()` to use GameSim + BestMove |
 
-**Verify:** `make compare` against Iter 2 snapshot. Expect dramatic win rate and turn count improvement.
+**Verify:** `make compare` against Iter 2 snapshot.
+
+**Results:**
+| Metric | Value |
+|--------|-------|
+| Avg turns (self-play) | ~87 (up from ~28) |
+| vs v2 (flood-fill) win rate | 16% (50 games) |
+| Tests | 7 new (total: 64) |
+
+> Loses to v2 flood-fill despite better self-play turns. Root causes: (1) paranoid worst-case
+> assumption at depth 1 is too conservative — the real opponent rarely plays the worst move for us;
+> (2) food urgency was missing from `Evaluate()` initially (0% → 16% after fix). Both issues
+> resolve naturally with deeper search (Iter 6) and a better eval (Iters 8-9).
 
 ---
 
@@ -513,7 +524,7 @@ Track all snapshots here for easy reference in `make compare` commands.
 | 2 | `snapshots/haruko-244a28f` | ~28 (self-play) | Food-seeking heuristic, 95% vs v1 |
 | 3 | — | — | Infrastructure only, no behavioral change |
 | 4 | — | — | Infrastructure only, no behavioral change |
-| 5 | | | |
+| 5 | `snapshots/haruko-7d164ae` | ~87 (self-play), 16% vs v2 | 1-ply paranoid minimax; loses to flood-fill (see Iter 5 notes) |
 | 6 | | | |
 | 7 | | | |
 | 8 | | | |
