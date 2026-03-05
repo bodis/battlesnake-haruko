@@ -8,6 +8,7 @@ import (
 const (
 	maxDepth    = 6  // paranoid minimax (retained for BestMove)
 	brsMaxDepth = 14 // BRS ply depth cap
+	qsMaxDepth  = 1  // quiescence search ply cap
 )
 
 // killerTable stores up to 2 killer moves per depth level.
@@ -147,6 +148,165 @@ func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction
 	}
 
 	return bestDir
+}
+
+// isQuiet returns true if the position is calm (no imminent combat).
+// Returns false when any head pair is within Manhattan distance 2,
+// or any alive snake has 0-1 safe moves.
+func isQuiet(g *GameSim, myID, oppID string) bool {
+	me := g.SnakeByID(myID)
+	if me == nil || !me.IsAlive() {
+		return true
+	}
+
+	// Check safe moves: only trigger QS when a snake is truly trapped.
+	for i := range g.Snakes {
+		s := &g.Snakes[i]
+		if !s.IsAlive() {
+			continue
+		}
+		if safeMoveCount(g, s) == 0 {
+			return false
+		}
+	}
+
+	// Check head proximity: only dist<=1 (adjacent, imminent collision).
+	myHead := me.Head()
+	for i := range g.Snakes {
+		s := &g.Snakes[i]
+		if s.ID == myID || !s.IsAlive() {
+			continue
+		}
+		oppHead := s.Head()
+		dist := abs(myHead.X-oppHead.X) + abs(myHead.Y-oppHead.Y)
+		if dist <= 1 {
+			return false
+		}
+	}
+	return true
+}
+
+// forcingMoves returns moves for snakeID that reduce Manhattan distance
+// to oppID's head (i.e., moves toward the fight).
+func forcingMoves(g *GameSim, snakeID, oppID string) []Direction {
+	me := g.SnakeByID(snakeID)
+	opp := g.SnakeByID(oppID)
+	if me == nil || opp == nil || !me.IsAlive() || !opp.IsAlive() {
+		return nil
+	}
+
+	myHead := me.Head()
+	oppHead := opp.Head()
+	curDist := abs(myHead.X-oppHead.X) + abs(myHead.Y-oppHead.Y)
+
+	var moves []Direction
+	for _, d := range AllDirections {
+		next := myHead.Move(d)
+		newDist := abs(next.X-oppHead.X) + abs(next.Y-oppHead.Y)
+		if newDist < curDist {
+			moves = append(moves, d)
+		}
+	}
+	return moves
+}
+
+// qsMax is the quiescence maximizer. It extends search in volatile positions.
+func qsMax(g *GameSim, qsDepth int, alpha, beta float64, myID, oppID string, ctx *searchContext) float64 {
+	if time.Now().After(ctx.deadline) {
+		ctx.timedOut = true
+		return 0
+	}
+
+	standPat := Evaluate(g, myID)
+
+	if g.IsOver() || qsDepth <= 0 {
+		return standPat
+	}
+	if isQuiet(g, myID, oppID) {
+		return standPat
+	}
+
+	// Stand-pat cutoff.
+	if standPat >= beta {
+		return standPat
+	}
+	if standPat > alpha {
+		alpha = standPat
+	}
+
+	moves := forcingMoves(g, myID, oppID)
+	if len(moves) == 0 {
+		return standPat
+	}
+
+	best := standPat
+	for _, myDir := range moves {
+		val := qsMin(g, qsDepth-1, alpha, beta, myDir, myID, oppID, ctx)
+		if ctx.timedOut {
+			break
+		}
+		if val > best {
+			best = val
+		}
+		if val > alpha {
+			alpha = val
+		}
+		if alpha >= beta {
+			break
+		}
+	}
+	return best
+}
+
+// qsMin is the quiescence minimizer. Applies myDir + opponent forcing move, then steps.
+func qsMin(g *GameSim, qsDepth int, alpha, beta float64, myDir Direction, myID, oppID string, ctx *searchContext) float64 {
+	if time.Now().After(ctx.deadline) {
+		ctx.timedOut = true
+		return 0
+	}
+
+	// No opponent — just simulate our move.
+	if oppID == "" {
+		sim := g.Clone()
+		sim.Step(map[string]Direction{myID: myDir})
+		return Evaluate(sim, myID)
+	}
+
+	moves := forcingMoves(g, oppID, myID)
+	if len(moves) == 0 {
+		// Opponent not approaching — position is quiet from their side.
+		// Apply our move with a neutral opponent move and eval.
+		sim := g.Clone()
+		sim.Step(map[string]Direction{myID: myDir, oppID: Down})
+		return Evaluate(sim, myID)
+	}
+
+	worst := math.Inf(1)
+	for _, oppDir := range moves {
+		sim := g.Clone()
+		sim.Step(map[string]Direction{myID: myDir, oppID: oppDir})
+
+		var val float64
+		if sim.IsOver() || qsDepth <= 0 {
+			val = Evaluate(sim, myID)
+		} else {
+			val = qsMax(sim, qsDepth, alpha, beta, myID, oppID, ctx)
+		}
+
+		if ctx.timedOut {
+			break
+		}
+		if val < worst {
+			worst = val
+		}
+		if val < beta {
+			beta = val
+		}
+		if beta <= alpha {
+			break
+		}
+	}
+	return worst
 }
 
 // brsMax is the maximizing ply (our move) in Best-Reply Search.

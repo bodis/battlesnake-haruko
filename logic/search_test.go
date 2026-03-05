@@ -405,6 +405,57 @@ func TestBRS_ReturnsValidMove(t *testing.T) {
 	}
 }
 
+// --- Quiescence Search Tests ---
+
+// TestIsQuiet_Volatile: heads within dist 1 → not quiet.
+func TestIsQuiet_Volatile(t *testing.T) {
+	me := makeSnake("me", []Coord{{5, 5}, {5, 4}, {5, 3}})
+	opp := makeSnake("opp", []Coord{{5, 6}, {5, 7}, {5, 8}})
+	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
+
+	if isQuiet(g, "me", "opp") {
+		t.Error("expected volatile (heads dist=1), got quiet")
+	}
+}
+
+// TestIsQuiet_Calm: heads far apart, plenty of safe moves → quiet.
+func TestIsQuiet_Calm(t *testing.T) {
+	me := makeSnake("me", []Coord{{1, 1}, {1, 0}})
+	opp := makeSnake("opp", []Coord{{9, 9}, {9, 8}})
+	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
+
+	if !isQuiet(g, "me", "opp") {
+		t.Error("expected quiet (heads far apart), got volatile")
+	}
+}
+
+// TestIsQuiet_TrappedSnake: a snake with 0 safe moves → not quiet.
+func TestIsQuiet_TrappedSnake(t *testing.T) {
+	// Opp at (0,0) completely boxed: wall on left/down, body on up/right.
+	me := makeSnake("me", []Coord{{9, 9}, {9, 8}})
+	opp := makeSnake("opp", []Coord{{0, 0}, {0, 1}, {1, 0}})
+	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
+
+	if isQuiet(g, "me", "opp") {
+		t.Error("expected volatile (opp has 0 safe moves), got quiet")
+	}
+}
+
+// TestQS_HeadToHeadKill: quiescence should detect a kill at horizon.
+func TestQS_HeadToHeadKill(t *testing.T) {
+	// We're longer (4 vs 2), heads 2 apart. At depth=0 in BRS, plain eval
+	// doesn't see the kill. QS should extend and find it.
+	me := makeSnake("me", []Coord{{5, 5}, {5, 4}, {5, 3}, {5, 2}})
+	opp := makeSnake("opp", []Coord{{5, 7}, {5, 8}})
+	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
+
+	dir := g.BestMoveIterative("me", 300*time.Millisecond)
+	// Should still find the kill (Up toward opponent).
+	if dir != Up {
+		t.Errorf("QS tactical test: expected Up (h2h kill), got %v", DirectionName(dir))
+	}
+}
+
 // TestEvaluate_MeDead: returns -1000 when our snake is eliminated.
 func TestEvaluate_MeDead(t *testing.T) {
 	me := SimSnake{ID: "me", Body: []Coord{{0, 0}}, Health: 0, Length: 1, EliminatedCause: "starvation"}

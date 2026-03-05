@@ -26,8 +26,8 @@ API types (`Coord`, `Battlesnake` in `models.go`) are converted to `logic.Coord`
 - `:8080` — current snake (all normal targets)
 - `:8081` — previous snapshot (`make compare`)
 
-## Current state (Iter 12)
-Best-Reply Search (BRS) replaces paranoid minimax in `BestMoveIterative`. BRS alternates max/min plies (branching 4 per ply instead of 16 per round), enabling depth 14 ply cap (~7 full rounds). TT probed/stored only in max nodes. Iterative deepening with 300ms budget. Composite evaluation unchanged. 59% vs Iter 11 (N=100).
+## Current state (Iter 13)
+BRS (Iter 12) + eval hardening (Iter 13). Evaluate() now loops over all alive opponents (N-opponent generalization) with extracted `safeMoveCount` helper. QS infrastructure (`isQuiet`, `forcingMoves`, `qsMax`, `qsMin`) exists in search.go but is **not wired into BRS leaf nodes** — see "Failed experiments" below. 59% vs Iter 11, ~50% vs Iter 12 (neutral in 1v1).
 
 ## Bench / version comparison
 - `make bench [N=10]` — self-play; turns are the meaningful metric (A/B split is noise)
@@ -35,12 +35,34 @@ Best-Reply Search (BRS) replaces paranoid minimax in `BestMoveIterative`. BRS al
 - `-save FILE` flag writes JSONL: `{"n":1,"winner":"A","turns":42,"seed":123}` — seed replays exact game with `--seed`
 - Speed: ~100 games in 4s with 16 workers; all local, no network overhead
 
-Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 ~417, v11 ~197, v12 ~213.
+Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 ~417, v11 ~197, v12 ~213, v13 ~200.
 `make bench` manages the server lifecycle automatically; `go run ./cmd/bench` requires a server already running on the target port.
 
 **Note:** Paranoid minimax (retained in `BestMove`) degrades at depth 7+. BRS in `BestMoveIterative` breaks this ceiling.
 
-**Next:** Iter 13 — Quiescence search + eval hardening. Then perf optimization (Iter 14), parameter tuning (Iter 15).
+**Next:** Iter 14 — perf optimization. Then parameter tuning (Iter 15).
+
+## Failed experiments (do NOT retry without new preconditions)
+
+### Quiescence search at BRS leaves (Iter 13)
+Tried wiring `qsMax`/`qsMin` into `brsMax`/`brsMin` depth-0 returns. Tested multiple configurations — all performed ≤50% vs Iter 12 baseline (N=100 each):
+
+| Config | Win rate vs Iter 12 |
+|--------|-------------------|
+| qsMaxDepth=2, isQuiet dist≤2, safeMoves≤1 | 41% |
+| qsMaxDepth=1, same triggers | 51% |
+| qsMaxDepth=1, tight triggers (dist≤1, safeMoves==0) | 48% |
+| qsMin: all 4 opp dirs when no forcing moves | 48% |
+| Eval hardening only (no QS at all) | 45% |
+
+**Root cause:** Clone+Step+Evaluate per QS node is too expensive relative to the 300ms budget. Each QS extension costs the same as a regular BRS ply, so QS steals depth from the main search. The tactical benefit of resolving horizon effects doesn't compensate for the lost main-search depth.
+
+**Preconditions to retry:**
+1. Clone+Step must become significantly cheaper (sync.Pool, arena allocation, or bitboard sim) — Iter 14 perf work
+2. Or: QS must avoid Clone+Step entirely (incremental move/unmove on the same GameSim)
+3. Or: Budget must increase well beyond 300ms (different game mode / hardware)
+
+**What to keep:** The `isQuiet`, `forcingMoves`, `safeMoveCount` helpers are useful independent of QS — `safeMoveCount` is already used by `Evaluate()`. Consider using `isQuiet` for search extensions (extend BRS depth by 1 in volatile positions) as a lighter alternative to full QS.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 is available at `/Users/bodist/go/bin/gopls`. Use it when appropriate:

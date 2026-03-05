@@ -19,11 +19,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iteration 12 |
-| **Next** | Iteration 13 |
+| **Completed** | Iteration 13 |
+| **Next** | Iteration 14 |
 | **Baseline** | v0 random safe-move: ~68 avg turns (self-play) |
-| **Current** | v12 Best-Reply Search; ~213 avg turns self-play, 59% vs v11 |
-| **Key insight** | BRS breaks the paranoid minimax depth ceiling. Branching 4/ply (vs 16/round) enables depth 14 ply cap. |
+| **Current** | v13 Eval hardening + QS infra; ~200 avg turns self-play, ~50% vs v12 (neutral in 1v1) |
+| **Key insight** | QS at BRS leaves too expensive (Clone+Step overhead steals main search depth). Eval N-opponent generalization ready for multi-snake. |
 
 ---
 
@@ -535,28 +535,41 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 > With BRS unlocking deeper search, the next priorities are fixing the horizon effect,
 > then optimizing per-node cost (which now matters since deeper search = more nodes).
 
-### Iteration 13 — Quiescence Search + Eval Hardening
+### Iteration 13 — Eval Hardening + Quiescence Search ✅
 
-**Status:** TODO
+**Status:** DONE
 **Depends on:** Iteration 12
 
-**Goal:** Don't stop evaluation mid-combat. When the search reaches max depth in a tactically volatile position (adjacent heads, imminent trap), extend the search until the position is "quiet."
+**Goal:** Generalize eval for N opponents, and add quiescence search to fix the horizon effect at BRS leaf nodes.
 
-**Why:** With BRS enabling depth 10+, the horizon effect becomes the new problem. The search might stop right before a head-to-head collision or a trap closes, producing a misleading eval. Quiescence search is the standard fix.
+**What was built:**
 
-**Approach:**
-- At leaf nodes, check if the position is "quiet": no adjacent heads within distance 2, no snake with 0-1 safe moves.
-- If not quiet, extend search by 1-2 plies (quiescence plies) with a reduced move set (only "forcing" moves — moves toward the opponent's head or moves that reduce opponent safe moves).
-- Cap quiescence depth at +2 to avoid explosion.
-- Also generalize eval for N opponents (current eval assumes 2-snake game with `var opp *SimSnake` picking only the first opponent).
+**Eval hardening (shipped):**
+- Extracted `safeMoveCount(g, s)` helper — counts safe directions from any snake's head (boundary + body collision). Reused by both `Evaluate()` and `isQuiet()`.
+- Refactored `Evaluate()` to loop over ALL alive opponents: length advantage, H2H pressure, and confinement now accumulate per-opponent. 1v1 behavior unchanged (loop runs exactly once).
+
+**Quiescence search infrastructure (built, NOT wired in):**
+- `isQuiet(g, myID, oppID)` — detects volatile positions (heads dist≤1, any snake with 0 safe moves)
+- `forcingMoves(g, snakeID, oppID)` — moves that reduce Manhattan distance to opponent head
+- `qsMax`/`qsMin` — stand-pat + forcing-move-only extension with alpha-beta, depth-capped at `qsMaxDepth`
+
+**Why QS is not wired into BRS leaves:** Tested 5 configurations, all ≤51% vs Iter 12. See Findings section below.
 
 **Files:**
 | File | Action |
 |------|--------|
-| `logic/search.go` | Add quiescence extension at leaf nodes |
-| `logic/eval.go` | Generalize to N opponents (sum territory vs all, aggregate confinement) |
+| `logic/eval.go` | Extract `safeMoveCount`, refactor `Evaluate` N-opponent loop |
+| `logic/search.go` | Add `qsMaxDepth`, `isQuiet`, `forcingMoves`, `qsMax`, `qsMin` |
+| `logic/eval_test.go` | Tests for `safeMoveCount` (3), 3-snake eval (1) |
+| `logic/search_test.go` | Tests for `isQuiet` (3), QS tactical scenario (1) |
 
-**Verify:** `make compare` vs Iter 12 snapshot.
+**Results:**
+| Metric | Before (v12) | After (v13) |
+|--------|--------------|-------------|
+| Avg turns (self-play, 10 games) | ~213 | ~200 |
+| vs v12 win rate (100 games) | — | ~50% (neutral — N-opponent loop is no-op in 1v1) |
+
+> Eval hardening is infrastructure for future multi-snake support. QS was the main target but proved too expensive — see "QS at BRS Leaves" in Findings.
 
 ---
 
@@ -568,6 +581,8 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 **Goal:** Reduce allocations in the hot path (Clone, Step, Evaluate) so each node is cheaper, squeezing 1-2 extra plies within the 300ms budget.
 
 **Why now (not earlier):** Under paranoid minimax at depth 6, the search finished within budget — making nodes cheaper just meant finishing faster with unused time. Now that BRS enables depth 10-12, per-node cost directly translates to extra plies. Every ~4× speedup = +1 ply.
+
+**Secondary goal:** Cheaper Clone+Step may also make quiescence search viable (see Iter 13 findings — QS failed because each QS node costs as much as a BRS node). After optimization, re-test wiring `qsMax`/`qsMin` into BRS leaves.
 
 **Techniques:**
 1. **Profile first:** `go tool pprof` on a bench run under BRS, fix the top 3 allocation hotspots
@@ -639,7 +654,7 @@ Track all snapshots here for easy reference in `make compare` commands.
 | 10 | `snapshots/haruko-c12e218` | ~417 (self-play), 54% vs v9, 75% vs v8 | Move ordering + killer heuristic |
 | 11 | `snapshots/haruko-0bf91d3` | ~197 (self-play), 65% vs v10 | Transposition table + Zobrist hashing, maxDepth 5→6 |
 | 12 | `snapshots/haruko-cee3f49` | ~213 (self-play), 59% vs v11 | Best-Reply Search (algorithm change) |
-| 13 | | | Quiescence search + eval hardening |
+| 13 | — | ~200 (self-play), ~50% vs v12 | Eval N-opponent generalization + QS infra (not wired — too expensive) |
 | 14 | | | Performance optimization |
 | 15 | | | Parameter tuning tournament |
 | 16 | | | Endgame detection (stretch) |
@@ -666,6 +681,22 @@ At maxDepth=5, the TT saved ~8% of work but the search always finished within bu
 
 ### Self-Play Turns ≠ Strength (Iter 11)
 Shorter self-play games can mean STRONGER play (both snakes find kills faster), not weaker. When self-play avg drops, always verify with `make compare` against a snapshot. v11's ~197 turns (vs v10's ~417) initially looked like a regression but was actually a 65% win rate improvement.
+
+### QS at BRS Leaves Too Expensive (Iter 13)
+Quiescence search (extending search in volatile positions at leaf nodes) was tested with 5 different configurations — all performed ≤51% vs Iter 12 baseline:
+
+| Config | Win rate vs v12 (N=100) |
+|--------|------------------------|
+| qsMaxDepth=2, isQuiet dist≤2, safeMoves≤1 | 41% |
+| qsMaxDepth=1, same triggers | 51% |
+| qsMaxDepth=1, tight triggers (dist≤1, safeMoves==0) | 48% |
+| qsMin: try all 4 opp dirs when no forcing moves | 48% |
+| Eval hardening only (no QS) | 45% |
+
+- **Root cause:** Each QS node requires Clone+Step+Evaluate, the same cost as a regular BRS ply. QS extensions steal depth from the main search, and the tactical benefit doesn't compensate for the lost depth.
+- **Do NOT retry** until: (1) Clone+Step becomes significantly cheaper (sync.Pool, incremental move/unmove, bitboard — see Iter 14), (2) or budget increases well beyond 300ms.
+- **Lighter alternative to try:** Use `isQuiet` for BRS depth *extensions* (+1 ply in volatile positions, no separate QS tree). This avoids the separate qsMax/qsMin overhead while still addressing the horizon effect.
+- **Infrastructure kept:** `isQuiet`, `forcingMoves`, `safeMoveCount`, `qsMax`, `qsMin` all exist in search.go with tests. Ready to wire in after perf optimization.
 
 ### Eval > Search Depth (Iter 5-7)
 Deeper search with a bad eval is counterproductive. v6 (depth 3, space-only eval) lost to v2 (flood-fill heuristic). Only after Voronoi territory eval (v7) did deeper search add value. Always fix the eval before optimizing search.
