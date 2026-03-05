@@ -41,7 +41,9 @@ Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 
 
 **Note:** Paranoid minimax (retained in `BestMove`) degrades at depth 7+. BRS in `BestMoveIterative` breaks this ceiling.
 
-**Next:** Endgame detection (Iter 16), parameter tuning (Iter 17), QS retry (Iter 18 — precondition met: Clone+Step now ~4x cheaper).
+**Next:** Endgame detection + space-filling (Iter 16), eval weight tuning (Iter 17), move ordering improvement (Iter 18).
+
+**Roadmap rationale:** Every past win came from deeper search or better evaluation. Generic search-tree pruning (Iter 13, 15) doesn't transfer to BRS's low branching factor (4×4=16). Remaining gains are in game-specific eval heuristics (partition-aware endgame, tuned weights) and better move ordering (more alpha-beta cutoffs = effectively deeper search).
 
 ## Failed experiments (do NOT retry without new preconditions)
 
