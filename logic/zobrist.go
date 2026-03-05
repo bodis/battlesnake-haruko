@@ -4,18 +4,17 @@ import "math/rand"
 
 const (
 	maxBoardCells = 121 // 11×11
-	maxSnakeCount = 4
 	maxBodyLen    = 121
 )
 
 var (
-	zobristBody [maxSnakeCount][maxBodyLen][maxBoardCells]uint64
+	zobristBody [MaxSnakes][maxBodyLen][maxBoardCells]uint64
 	zobristFood [maxBoardCells]uint64
 )
 
 func init() {
 	rng := rand.New(rand.NewSource(0x4861_7275_6B30))
-	for s := 0; s < maxSnakeCount; s++ {
+	for s := 0; s < MaxSnakes; s++ {
 		for seg := 0; seg < maxBodyLen; seg++ {
 			for c := 0; c < maxBoardCells; c++ {
 				zobristBody[s][seg][c] = rng.Uint64()
@@ -42,7 +41,7 @@ func (g *GameSim) Hash() uint64 {
 		if !s.IsAlive() {
 			continue
 		}
-		if i >= maxSnakeCount {
+		if i >= MaxSnakes {
 			break
 		}
 		for seg := 0; seg < len(s.Body) && seg < maxBodyLen; seg++ {

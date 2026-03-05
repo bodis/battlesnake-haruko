@@ -33,20 +33,20 @@ func safeMoveCount(g *GameSim, s *SimSnake) int {
 	return count
 }
 
-// Evaluate scores a GameSim position from myID's perspective.
+// Evaluate scores a GameSim position from myIdx's perspective.
 // Returns -1000 if we're dead, +1000 if all opponents are dead,
 // otherwise Voronoi territory difference + length advantage +
 // head-to-head pressure + opponent confinement + food urgency.
-func Evaluate(g *GameSim, myID string) float64 {
-	me := g.SnakeByID(myID)
-	if me == nil || !me.IsAlive() {
+func Evaluate(g *GameSim, myIdx int) float64 {
+	me := &g.Snakes[myIdx]
+	if !me.IsAlive() {
 		return -1000
 	}
 
 	// Check for alive opponents.
 	allOppsDead := true
 	for i := range g.Snakes {
-		if g.Snakes[i].ID != myID && g.Snakes[i].IsAlive() {
+		if i != myIdx && g.Snakes[i].IsAlive() {
 			allOppsDead = false
 			break
 		}
@@ -56,7 +56,7 @@ func Evaluate(g *GameSim, myID string) float64 {
 	}
 
 	// Territory score (dominant factor).
-	myTerritory, oppTerritory := VoronoiTerritory(g, myID)
+	myTerritory, oppTerritory := VoronoiTerritory(g, myIdx)
 	score := float64(myTerritory - oppTerritory)
 
 	// Accumulate per-opponent scores.
@@ -65,7 +65,7 @@ func Evaluate(g *GameSim, myID string) float64 {
 	wH2H := 5.0
 	for i := range g.Snakes {
 		opp := &g.Snakes[i]
-		if opp.ID == myID || !opp.IsAlive() {
+		if i == myIdx || !opp.IsAlive() {
 			continue
 		}
 

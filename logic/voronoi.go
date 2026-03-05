@@ -1,20 +1,45 @@
 package logic
 
+import "sync"
+
+// voronoiWorkspace holds pre-allocated arrays for VoronoiTerritory BFS.
+type voronoiWorkspace struct {
+	owner   [maxBoardCells]int8
+	dist    [maxBoardCells]int16
+	blocked [maxBoardCells]bool
+	queue   []voronoiEntry
+}
+
+type voronoiEntry struct {
+	x, y int
+}
+
+var voronoiPool = sync.Pool{
+	New: func() any {
+		return &voronoiWorkspace{
+			queue: make([]voronoiEntry, 0, maxBoardCells),
+		}
+	},
+}
+
 // VoronoiTerritory performs a multi-source BFS from all alive snake heads
-// and returns the number of cells claimed by myID and by all opponents combined.
+// and returns the number of cells claimed by myIdx and by all opponents combined.
 // Cells reached by two snakes in the same BFS layer are unclaimed (ties).
-func VoronoiTerritory(g *GameSim, myID string) (myCount, oppCount int) {
+func VoronoiTerritory(g *GameSim, myIdx int) (myCount, oppCount int) {
 	size := g.Width * g.Height
 
-	// owner[cell] == 0: unclaimed, positive: snake index+1, -1: tied
-	owner := make([]int8, size)
-	dist := make([]int16, size)
-	for i := range dist {
-		dist[i] = -1
+	ws := voronoiPool.Get().(*voronoiWorkspace)
+	defer voronoiPool.Put(ws)
+
+	// Clear workspace arrays for the board size.
+	for i := 0; i < size; i++ {
+		ws.owner[i] = 0
+		ws.dist[i] = -1
+		ws.blocked[i] = false
 	}
+	ws.queue = ws.queue[:0]
 
 	// blocked: interior body segments (index 1..len-2) of alive snakes.
-	blocked := make([]bool, size)
 	for i := range g.Snakes {
 		s := &g.Snakes[i]
 		if !s.IsAlive() {
@@ -24,17 +49,12 @@ func VoronoiTerritory(g *GameSim, myID string) (myCount, oppCount int) {
 		for seg := 1; seg < end; seg++ {
 			c := s.Body[seg]
 			if c.X >= 0 && c.X < g.Width && c.Y >= 0 && c.Y < g.Height {
-				blocked[c.Y*g.Width+c.X] = true
+				ws.blocked[c.Y*g.Width+c.X] = true
 			}
 		}
 	}
 
 	// Seed queue with heads of alive snakes.
-	type entry struct {
-		x, y int
-	}
-	var queue []entry
-
 	for i := range g.Snakes {
 		s := &g.Snakes[i]
 		if !s.IsAlive() {
@@ -46,27 +66,23 @@ func VoronoiTerritory(g *GameSim, myID string) (myCount, oppCount int) {
 		}
 		idx := head.Y*g.Width + head.X
 		tag := int8(i + 1)
-		if dist[idx] == -1 {
-			// First snake to seed this cell.
-			dist[idx] = 0
-			owner[idx] = tag
-			queue = append(queue, entry{head.X, head.Y})
-		} else if dist[idx] == 0 {
-			// Two heads on same cell at distance 0 → tie.
-			owner[idx] = -1
+		if ws.dist[idx] == -1 {
+			ws.dist[idx] = 0
+			ws.owner[idx] = tag
+			ws.queue = append(ws.queue, voronoiEntry{head.X, head.Y})
+		} else if ws.dist[idx] == 0 {
+			ws.owner[idx] = -1
 		}
 	}
 
 	// BFS expansion.
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
+	for qi := 0; qi < len(ws.queue); qi++ {
+		cur := ws.queue[qi]
 		ci := cur.y*g.Width + cur.x
-		curDist := dist[ci]
-		curOwner := owner[ci]
+		curDist := ws.dist[ci]
+		curOwner := ws.owner[ci]
 
 		if curOwner == -1 {
-			// Tied cell — don't expand from it.
 			continue
 		}
 
@@ -77,33 +93,25 @@ func VoronoiTerritory(g *GameSim, myID string) (myCount, oppCount int) {
 				continue
 			}
 			ni := next.Y*g.Width + next.X
-			if blocked[ni] {
+			if ws.blocked[ni] {
 				continue
 			}
 			nd := curDist + 1
-			if dist[ni] == -1 {
-				// Unclaimed — claim it.
-				dist[ni] = nd
-				owner[ni] = curOwner
-				queue = append(queue, entry{next.X, next.Y})
-			} else if dist[ni] == nd && owner[ni] != curOwner && owner[ni] != -1 {
-				// Same distance, different owner → tie.
-				owner[ni] = -1
+			if ws.dist[ni] == -1 {
+				ws.dist[ni] = nd
+				ws.owner[ni] = curOwner
+				ws.queue = append(ws.queue, voronoiEntry{next.X, next.Y})
+			} else if ws.dist[ni] == nd && ws.owner[ni] != curOwner && ws.owner[ni] != -1 {
+				ws.owner[ni] = -1
 			}
 		}
 	}
 
 	// Count territory.
-	myTag := int8(-1)
-	for i := range g.Snakes {
-		if g.Snakes[i].ID == myID {
-			myTag = int8(i + 1)
-			break
-		}
-	}
+	myTag := int8(myIdx + 1)
 
 	for i := 0; i < size; i++ {
-		o := owner[i]
+		o := ws.owner[i]
 		if o <= 0 {
 			continue
 		}

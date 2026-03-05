@@ -53,3 +53,28 @@ func (c Coord) Move(d Direction) Coord {
 	}
 	return c
 }
+
+// MaxSnakes is the maximum number of snakes supported in a game.
+const MaxSnakes = 4
+
+// MoveSet holds a direction for each snake, indexed by snake position in GameSim.Snakes.
+type MoveSet struct {
+	Dir [MaxSnakes]Direction
+	Has [MaxSnakes]bool
+}
+
+func newMoveSet1(idx int, dir Direction) MoveSet {
+	var ms MoveSet
+	ms.Dir[idx] = dir
+	ms.Has[idx] = true
+	return ms
+}
+
+func newMoveSet2(idx1 int, dir1 Direction, idx2 int, dir2 Direction) MoveSet {
+	var ms MoveSet
+	ms.Dir[idx1] = dir1
+	ms.Has[idx1] = true
+	ms.Dir[idx2] = dir2
+	ms.Has[idx2] = true
+	return ms
+}

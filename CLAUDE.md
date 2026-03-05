@@ -4,13 +4,14 @@ Battlesnake AI in Go. Module: `github.com/bodist/haruko`. Server port: 8080.
 
 ## Key files
 - `main.go` — `info/start/end/move` handlers, `GameSession` map (mutex-protected with `sync.RWMutex`)
-- `logic/sim.go` — `GameSim`: full game state simulator with `Clone`, `Step`, `MoveSnakes`, `IsOver`
-- `logic/eval.go` — `Evaluate(g, myID)`: composite eval (Voronoi territory + length advantage + h2h pressure + opponent confinement + food urgency)
-- `logic/voronoi.go` — `VoronoiTerritory(g, myID)`: multi-source BFS territory counting
-- `logic/search.go` — `BestMoveIterative(myID, budget)`: iterative deepening with time management; paranoid minimax with alpha-beta pruning + transposition table
+- `logic/sim.go` — `GameSim`: full game state simulator with `Clone`, `CloneFromPool`/`Release`, `Step(MoveSet)`, `MoveSnakes(MoveSet)`, `IsOver`
+- `logic/eval.go` — `Evaluate(g, myIdx int)`: composite eval (Voronoi territory + length advantage + h2h pressure + opponent confinement + food urgency)
+- `logic/voronoi.go` — `VoronoiTerritory(g, myIdx int)`: multi-source BFS territory counting (workspace pooled)
+- `logic/search.go` — `BestMoveIterative(myID, budget)`: iterative deepening with time management; index-based BRS + paranoid minimax; all hot-path cloning via sync.Pool
 - `logic/zobrist.go` — `GameSim.Hash()`: Zobrist hashing (snake bodies + food)
 - `logic/tt.go` — `TranspositionTable`: probe/store with generation-based invalidation
-- `logic/types.go` — shared types: `Coord`, `Snake`, `Direction`, `AllDirections`
+- `logic/types.go` — shared types: `Coord`, `Snake`, `Direction`, `AllDirections`, `MaxSnakes`, `MoveSet`
+- `logic/bench_test.go` — microbenchmarks for Clone, Step, Evaluate, Voronoi, BRS node
 - `Makefile` — `make local` is the main dev loop (build → start server → 1v1 self-game → stop)
 
 ## Rules CLI (game engine)
@@ -26,8 +27,8 @@ API types (`Coord`, `Battlesnake` in `models.go`) are converted to `logic.Coord`
 - `:8080` — current snake (all normal targets)
 - `:8081` — previous snapshot (`make compare`)
 
-## Current state (Iter 13)
-BRS (Iter 12) + eval hardening (Iter 13). Evaluate() now loops over all alive opponents (N-opponent generalization) with extracted `safeMoveCount` helper. QS infrastructure (`isQuiet`, `forcingMoves`, `qsMax`, `qsMin`) exists in search.go but is **not wired into BRS leaf nodes** — see "Failed experiments" below. 59% vs Iter 11, ~50% vs Iter 12 (neutral in 1v1).
+## Current state (Iter 14)
+Perf optimization: zero-alloc hot path. `MoveSet` replaces `map[string]Direction`, index-based search/eval/voronoi (no `SnakeByID` in hot path), `sync.Pool` for `GameSim` clones (4.4x faster, 0 allocs), pooled Voronoi workspace, stack-allocated arrays in `Step`. BRS node cost: ~1.1µs/0 allocs. 56% vs Iter 12 (N=100).
 
 ## Bench / version comparison
 - `make bench [N=10]` — self-play; turns are the meaningful metric (A/B split is noise)
@@ -35,12 +36,12 @@ BRS (Iter 12) + eval hardening (Iter 13). Evaluate() now loops over all alive op
 - `-save FILE` flag writes JSONL: `{"n":1,"winner":"A","turns":42,"seed":123}` — seed replays exact game with `--seed`
 - Speed: ~100 games in 4s with 16 workers; all local, no network overhead
 
-Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 ~417, v11 ~197, v12 ~213, v13 ~200.
+Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 ~417, v11 ~197, v12 ~213, v13 ~200, v14 ~215.
 `make bench` manages the server lifecycle automatically; `go run ./cmd/bench` requires a server already running on the target port.
 
 **Note:** Paranoid minimax (retained in `BestMove`) degrades at depth 7+. BRS in `BestMoveIterative` breaks this ceiling.
 
-**Next:** Iter 14 — perf optimization (alloc reduction). Then search pruning/extensions (Iter 15), endgame detection (Iter 16), parameter tuning (Iter 17).
+**Next:** Iter 15 — search pruning/extensions (LMR, null move pruning, volatile position extensions). Then endgame detection (Iter 16), parameter tuning (Iter 17), QS retry (Iter 18 — precondition met: Clone+Step now ~4x cheaper).
 
 ## Failed experiments (do NOT retry without new preconditions)
 
@@ -58,7 +59,7 @@ Tried wiring `qsMax`/`qsMin` into `brsMax`/`brsMin` depth-0 returns. Tested mult
 **Root cause:** Clone+Step+Evaluate per QS node is too expensive relative to the 300ms budget. Each QS extension costs the same as a regular BRS ply, so QS steals depth from the main search. The tactical benefit of resolving horizon effects doesn't compensate for the lost main-search depth.
 
 **Preconditions to retry:**
-1. Clone+Step must become significantly cheaper (sync.Pool, arena allocation, or bitboard sim) — Iter 14 perf work
+1. ~~Clone+Step must become significantly cheaper (sync.Pool, arena allocation, or bitboard sim) — Iter 14 perf work~~ **MET in Iter 14**: CloneFromPool 4.4x faster (19ns/0 allocs), Step 0 allocs. BRS node ~1.1µs total.
 2. Or: QS must avoid Clone+Step entirely (incremental move/unmove on the same GameSim)
 3. Or: Budget must increase well beyond 300ms (different game mode / hardware)
 

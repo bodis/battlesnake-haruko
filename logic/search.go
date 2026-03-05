@@ -28,11 +28,9 @@ func (ctx *searchContext) storeKiller(depth int, d Direction) {
 	if depth > brsMaxDepth {
 		return
 	}
-	// Don't store duplicates.
 	if ctx.hasKillers[depth][0] && ctx.killers[depth][0] == d {
 		return
 	}
-	// Shift slot 0 → slot 1, store new in slot 0.
 	ctx.killers[depth][1] = ctx.killers[depth][0]
 	ctx.hasKillers[depth][1] = ctx.hasKillers[depth][0]
 	ctx.killers[depth][0] = d
@@ -69,15 +67,27 @@ func orderedMoves(pv Direction, hasPV bool, killers [2]Direction, hasKillers [2]
 	return result
 }
 
-// BestMove runs paranoid minimax with alpha-beta pruning to the given depth.
-// Each depth level = one simultaneous turn (our move + all opponent moves + Step).
-func (g *GameSim) BestMove(myID string, depth int) Direction {
-	// Collect alive opponent IDs.
-	var oppIDs []string
+// resolveIdx finds the snake index for the given ID.
+func (g *GameSim) resolveIdx(id string) int {
 	for i := range g.Snakes {
-		s := &g.Snakes[i]
-		if s.ID != myID && s.IsAlive() {
-			oppIDs = append(oppIDs, s.ID)
+		if g.Snakes[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// BestMove runs paranoid minimax with alpha-beta pruning to the given depth.
+func (g *GameSim) BestMove(myID string, depth int) Direction {
+	myIdx := g.resolveIdx(myID)
+	if myIdx == -1 {
+		return Down
+	}
+
+	var oppIdxs []int
+	for i := range g.Snakes {
+		if i != myIdx && g.Snakes[i].IsAlive() {
+			oppIdxs = append(oppIdxs, i)
 		}
 	}
 
@@ -85,7 +95,7 @@ func (g *GameSim) BestMove(myID string, depth int) Direction {
 	bestScore := math.Inf(-1)
 
 	for _, myDir := range AllDirections {
-		score := minimaxMin(g, depth, math.Inf(-1), math.Inf(1), myDir, myID, oppIDs, nil)
+		score := minimaxMin(g, depth, math.Inf(-1), math.Inf(1), myDir, myIdx, oppIdxs, nil)
 		if score > bestScore {
 			bestScore = score
 			bestDir = myDir
@@ -96,14 +106,16 @@ func (g *GameSim) BestMove(myID string, depth int) Direction {
 }
 
 // BestMoveIterative runs iterative deepening with BRS (Best-Reply Search).
-// BRS alternates max (our) and min (opponent) plies instead of simultaneous moves,
-// reducing pessimism and enabling deeper search than paranoid minimax.
 func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction {
-	var oppID string
+	myIdx := g.resolveIdx(myID)
+	if myIdx == -1 {
+		return Down
+	}
+
+	oppIdx := -1
 	for i := range g.Snakes {
-		s := &g.Snakes[i]
-		if s.ID != myID && s.IsAlive() {
-			oppID = s.ID
+		if i != myIdx && g.Snakes[i].IsAlive() {
+			oppIdx = i
 			break
 		}
 	}
@@ -129,7 +141,7 @@ func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction
 
 		rootMoves := orderedMoves(pvMove, hasPV, ctx.killers[depth], ctx.hasKillers[depth])
 		for _, myDir := range rootMoves {
-			score := brsMin(g, depth-1, math.Inf(-1), math.Inf(1), myDir, myID, oppID, ctx)
+			score := brsMin(g, depth-1, math.Inf(-1), math.Inf(1), myDir, myIdx, oppIdx, ctx)
 			if ctx.timedOut {
 				break
 			}
@@ -151,15 +163,12 @@ func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction
 }
 
 // isQuiet returns true if the position is calm (no imminent combat).
-// Returns false when any head pair is within Manhattan distance 2,
-// or any alive snake has 0-1 safe moves.
-func isQuiet(g *GameSim, myID, oppID string) bool {
-	me := g.SnakeByID(myID)
-	if me == nil || !me.IsAlive() {
+func isQuiet(g *GameSim, myIdx, oppIdx int) bool {
+	me := &g.Snakes[myIdx]
+	if !me.IsAlive() {
 		return true
 	}
 
-	// Check safe moves: only trigger QS when a snake is truly trapped.
 	for i := range g.Snakes {
 		s := &g.Snakes[i]
 		if !s.IsAlive() {
@@ -170,11 +179,10 @@ func isQuiet(g *GameSim, myID, oppID string) bool {
 		}
 	}
 
-	// Check head proximity: only dist<=1 (adjacent, imminent collision).
 	myHead := me.Head()
 	for i := range g.Snakes {
 		s := &g.Snakes[i]
-		if s.ID == myID || !s.IsAlive() {
+		if i == myIdx || !s.IsAlive() {
 			continue
 		}
 		oppHead := s.Head()
@@ -186,12 +194,12 @@ func isQuiet(g *GameSim, myID, oppID string) bool {
 	return true
 }
 
-// forcingMoves returns moves for snakeID that reduce Manhattan distance
-// to oppID's head (i.e., moves toward the fight).
-func forcingMoves(g *GameSim, snakeID, oppID string) []Direction {
-	me := g.SnakeByID(snakeID)
-	opp := g.SnakeByID(oppID)
-	if me == nil || opp == nil || !me.IsAlive() || !opp.IsAlive() {
+// forcingMoves returns moves for snakeIdx that reduce Manhattan distance
+// to oppIdx's head (i.e., moves toward the fight).
+func forcingMoves(g *GameSim, snakeIdx, oppIdx int) []Direction {
+	me := &g.Snakes[snakeIdx]
+	opp := &g.Snakes[oppIdx]
+	if !me.IsAlive() || !opp.IsAlive() {
 		return nil
 	}
 
@@ -211,22 +219,21 @@ func forcingMoves(g *GameSim, snakeID, oppID string) []Direction {
 }
 
 // qsMax is the quiescence maximizer. It extends search in volatile positions.
-func qsMax(g *GameSim, qsDepth int, alpha, beta float64, myID, oppID string, ctx *searchContext) float64 {
+func qsMax(g *GameSim, qsDepth int, alpha, beta float64, myIdx, oppIdx int, ctx *searchContext) float64 {
 	if time.Now().After(ctx.deadline) {
 		ctx.timedOut = true
 		return 0
 	}
 
-	standPat := Evaluate(g, myID)
+	standPat := Evaluate(g, myIdx)
 
 	if g.IsOver() || qsDepth <= 0 {
 		return standPat
 	}
-	if isQuiet(g, myID, oppID) {
+	if isQuiet(g, myIdx, oppIdx) {
 		return standPat
 	}
 
-	// Stand-pat cutoff.
 	if standPat >= beta {
 		return standPat
 	}
@@ -234,14 +241,14 @@ func qsMax(g *GameSim, qsDepth int, alpha, beta float64, myID, oppID string, ctx
 		alpha = standPat
 	}
 
-	moves := forcingMoves(g, myID, oppID)
+	moves := forcingMoves(g, myIdx, oppIdx)
 	if len(moves) == 0 {
 		return standPat
 	}
 
 	best := standPat
 	for _, myDir := range moves {
-		val := qsMin(g, qsDepth-1, alpha, beta, myDir, myID, oppID, ctx)
+		val := qsMin(g, qsDepth-1, alpha, beta, myDir, myIdx, oppIdx, ctx)
 		if ctx.timedOut {
 			break
 		}
@@ -259,39 +266,42 @@ func qsMax(g *GameSim, qsDepth int, alpha, beta float64, myID, oppID string, ctx
 }
 
 // qsMin is the quiescence minimizer. Applies myDir + opponent forcing move, then steps.
-func qsMin(g *GameSim, qsDepth int, alpha, beta float64, myDir Direction, myID, oppID string, ctx *searchContext) float64 {
+func qsMin(g *GameSim, qsDepth int, alpha, beta float64, myDir Direction, myIdx, oppIdx int, ctx *searchContext) float64 {
 	if time.Now().After(ctx.deadline) {
 		ctx.timedOut = true
 		return 0
 	}
 
 	// No opponent — just simulate our move.
-	if oppID == "" {
-		sim := g.Clone()
-		sim.Step(map[string]Direction{myID: myDir})
-		return Evaluate(sim, myID)
+	if oppIdx == -1 {
+		sim := g.CloneFromPool()
+		sim.Step(newMoveSet1(myIdx, myDir))
+		val := Evaluate(sim, myIdx)
+		sim.Release()
+		return val
 	}
 
-	moves := forcingMoves(g, oppID, myID)
+	moves := forcingMoves(g, oppIdx, myIdx)
 	if len(moves) == 0 {
-		// Opponent not approaching — position is quiet from their side.
-		// Apply our move with a neutral opponent move and eval.
-		sim := g.Clone()
-		sim.Step(map[string]Direction{myID: myDir, oppID: Down})
-		return Evaluate(sim, myID)
+		sim := g.CloneFromPool()
+		sim.Step(newMoveSet2(myIdx, myDir, oppIdx, Down))
+		val := Evaluate(sim, myIdx)
+		sim.Release()
+		return val
 	}
 
 	worst := math.Inf(1)
 	for _, oppDir := range moves {
-		sim := g.Clone()
-		sim.Step(map[string]Direction{myID: myDir, oppID: oppDir})
+		sim := g.CloneFromPool()
+		sim.Step(newMoveSet2(myIdx, myDir, oppIdx, oppDir))
 
 		var val float64
 		if sim.IsOver() || qsDepth <= 0 {
-			val = Evaluate(sim, myID)
+			val = Evaluate(sim, myIdx)
 		} else {
-			val = qsMax(sim, qsDepth, alpha, beta, myID, oppID, ctx)
+			val = qsMax(sim, qsDepth, alpha, beta, myIdx, oppIdx, ctx)
 		}
+		sim.Release()
 
 		if ctx.timedOut {
 			break
@@ -310,14 +320,14 @@ func qsMin(g *GameSim, qsDepth int, alpha, beta float64, myDir Direction, myID, 
 }
 
 // brsMax is the maximizing ply (our move) in Best-Reply Search.
-func brsMax(g *GameSim, depth int, alpha, beta float64, myID, oppID string, ctx *searchContext) float64 {
+func brsMax(g *GameSim, depth int, alpha, beta float64, myIdx, oppIdx int, ctx *searchContext) float64 {
 	if time.Now().After(ctx.deadline) {
 		ctx.timedOut = true
 		return 0
 	}
 
 	if depth <= 0 || g.IsOver() {
-		return Evaluate(g, myID)
+		return Evaluate(g, myIdx)
 	}
 
 	alpha0 := alpha
@@ -346,7 +356,7 @@ func brsMax(g *GameSim, depth int, alpha, beta float64, myID, oppID string, ctx 
 	}
 
 	for _, myDir := range moves {
-		val := brsMin(g, depth-1, alpha, beta, myDir, myID, oppID, ctx)
+		val := brsMin(g, depth-1, alpha, beta, myDir, myIdx, oppIdx, ctx)
 		if ctx.timedOut {
 			break
 		}
@@ -371,22 +381,24 @@ func brsMax(g *GameSim, depth int, alpha, beta float64, myID, oppID string, ctx 
 }
 
 // brsMin is the minimizing ply (opponent's response) in Best-Reply Search.
-// myDir is our pending move; this function picks the opponent's best reply,
-// then applies both moves via Clone+Step.
-func brsMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myID, oppID string, ctx *searchContext) float64 {
+func brsMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myIdx, oppIdx int, ctx *searchContext) float64 {
 	if time.Now().After(ctx.deadline) {
 		ctx.timedOut = true
 		return 0
 	}
 
 	// No opponent — just simulate our move alone.
-	if oppID == "" {
-		sim := g.Clone()
-		sim.Step(map[string]Direction{myID: myDir})
+	if oppIdx == -1 {
+		sim := g.CloneFromPool()
+		sim.Step(newMoveSet1(myIdx, myDir))
 		if depth <= 0 || sim.IsOver() {
-			return Evaluate(sim, myID)
+			val := Evaluate(sim, myIdx)
+			sim.Release()
+			return val
 		}
-		return brsMax(sim, depth, alpha, beta, myID, oppID, ctx)
+		val := brsMax(sim, depth, alpha, beta, myIdx, oppIdx, ctx)
+		sim.Release()
+		return val
 	}
 
 	worstScore := math.Inf(1)
@@ -399,15 +411,16 @@ func brsMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myID, o
 	}
 
 	for _, oppDir := range moves {
-		sim := g.Clone()
-		sim.Step(map[string]Direction{myID: myDir, oppID: oppDir})
+		sim := g.CloneFromPool()
+		sim.Step(newMoveSet2(myIdx, myDir, oppIdx, oppDir))
 
 		var val float64
 		if depth <= 0 || sim.IsOver() {
-			val = Evaluate(sim, myID)
+			val = Evaluate(sim, myIdx)
 		} else {
-			val = brsMax(sim, depth-1, alpha, beta, myID, oppID, ctx)
+			val = brsMax(sim, depth-1, alpha, beta, myIdx, oppIdx, ctx)
 		}
+		sim.Release()
 
 		if ctx.timedOut {
 			break
@@ -430,44 +443,47 @@ func brsMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myID, o
 
 // minimaxMin is the minimizing layer: enumerates all opponent move combos,
 // applies our move + opponent moves via Step, and returns the worst-case score.
-func minimaxMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myID string, oppIDs []string, ctx *searchContext) float64 {
+func minimaxMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myIdx int, oppIdxs []int, ctx *searchContext) float64 {
 	if ctx != nil && time.Now().After(ctx.deadline) {
 		ctx.timedOut = true
 		return 0
 	}
 
 	// No opponents — just simulate our move alone.
-	if len(oppIDs) == 0 {
-		sim := g.Clone()
-		sim.Step(map[string]Direction{myID: myDir})
+	if len(oppIdxs) == 0 {
+		sim := g.CloneFromPool()
+		sim.Step(newMoveSet1(myIdx, myDir))
 		if depth <= 1 || sim.IsOver() {
-			return Evaluate(sim, myID)
+			val := Evaluate(sim, myIdx)
+			sim.Release()
+			return val
 		}
-		return minimaxMax(sim, depth-1, alpha, beta, myID, oppIDs, ctx)
+		val := minimaxMax(sim, depth-1, alpha, beta, myIdx, oppIdxs, ctx)
+		sim.Release()
+		return val
 	}
 
 	worstScore := math.Inf(1)
 
-	forEachOppCombo(oppIDs, func(oppMoves map[string]Direction) bool {
+	forEachOppCombo(oppIdxs, func(oppMoves MoveSet) bool {
 		if ctx != nil && ctx.timedOut {
 			return false
 		}
 
-		moves := make(map[string]Direction, len(oppMoves)+1)
-		for id, d := range oppMoves {
-			moves[id] = d
-		}
-		moves[myID] = myDir
+		// Merge our move into oppMoves.
+		oppMoves.Dir[myIdx] = myDir
+		oppMoves.Has[myIdx] = true
 
-		sim := g.Clone()
-		sim.Step(moves)
+		sim := g.CloneFromPool()
+		sim.Step(oppMoves)
 
 		var val float64
 		if depth <= 1 || sim.IsOver() {
-			val = Evaluate(sim, myID)
+			val = Evaluate(sim, myIdx)
 		} else {
-			val = minimaxMax(sim, depth-1, alpha, beta, myID, oppIDs, ctx)
+			val = minimaxMax(sim, depth-1, alpha, beta, myIdx, oppIdxs, ctx)
 		}
+		sim.Release()
 
 		if ctx != nil && ctx.timedOut {
 			return false
@@ -479,8 +495,7 @@ func minimaxMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myI
 		if val < beta {
 			beta = val
 		}
-		// Beta cutoff: maximizer already has a better option.
-		return beta > alpha // return false to stop iteration
+		return beta > alpha
 	})
 
 	return worstScore
@@ -488,7 +503,7 @@ func minimaxMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myI
 
 // minimaxMax is the maximizing layer: tries each of our 4 moves and returns
 // the best score after the opponent responds (via minimaxMin).
-func minimaxMax(g *GameSim, depth int, alpha, beta float64, myID string, oppIDs []string, ctx *searchContext) float64 {
+func minimaxMax(g *GameSim, depth int, alpha, beta float64, myIdx int, oppIdxs []int, ctx *searchContext) float64 {
 	if ctx != nil && time.Now().After(ctx.deadline) {
 		ctx.timedOut = true
 		return 0
@@ -520,7 +535,7 @@ func minimaxMax(g *GameSim, depth int, alpha, beta float64, myID string, oppIDs 
 	}
 
 	for _, myDir := range moves {
-		val := minimaxMin(g, depth, alpha, beta, myDir, myID, oppIDs, ctx)
+		val := minimaxMin(g, depth, alpha, beta, myDir, myIdx, oppIdxs, ctx)
 		if ctx != nil && ctx.timedOut {
 			break
 		}
@@ -531,7 +546,6 @@ func minimaxMax(g *GameSim, depth int, alpha, beta float64, myID string, oppIDs 
 		if val > alpha {
 			alpha = val
 		}
-		// Alpha cutoff: minimizer already has a better option.
 		if alpha >= beta {
 			if ctx != nil {
 				ctx.storeKiller(depth, myDir)
@@ -540,7 +554,6 @@ func minimaxMax(g *GameSim, depth int, alpha, beta float64, myID string, oppIDs 
 		}
 	}
 
-	// Store in TT (skip on timeout — partial results are unreliable).
 	if ctx != nil && ctx.tt != nil && !ctx.timedOut {
 		ctx.tt.Store(hash, depth, bestScore, bestMove, alpha0, beta)
 	}
@@ -548,21 +561,23 @@ func minimaxMax(g *GameSim, depth int, alpha, beta float64, myID string, oppIDs 
 	return bestScore
 }
 
-// forEachOppCombo calls fn with every combination of moves for oppIDs.
+// forEachOppCombo calls fn with every combination of moves for oppIdxs.
 // fn returns true to continue, false to stop early (for alpha-beta cutoffs).
-func forEachOppCombo(ids []string, fn func(map[string]Direction) bool) {
-	m := make(map[string]Direction, len(ids))
-	forEachOppComboRec(ids, 0, m, fn)
+func forEachOppCombo(idxs []int, fn func(MoveSet) bool) {
+	var ms MoveSet
+	forEachOppComboRec(idxs, 0, &ms, fn)
 }
 
 // forEachOppComboRec returns false if iteration was stopped early.
-func forEachOppComboRec(ids []string, idx int, m map[string]Direction, fn func(map[string]Direction) bool) bool {
-	if idx == len(ids) {
-		return fn(m)
+func forEachOppComboRec(idxs []int, pos int, ms *MoveSet, fn func(MoveSet) bool) bool {
+	if pos == len(idxs) {
+		return fn(*ms)
 	}
+	i := idxs[pos]
 	for _, d := range AllDirections {
-		m[ids[idx]] = d
-		if !forEachOppComboRec(ids, idx+1, m, fn) {
+		ms.Dir[i] = d
+		ms.Has[i] = true
+		if !forEachOppComboRec(idxs, pos+1, ms, fn) {
 			return false
 		}
 	}

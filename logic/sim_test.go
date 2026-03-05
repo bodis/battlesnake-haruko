@@ -2,6 +2,21 @@ package logic
 
 import "testing"
 
+// testMoves converts a map[string]Direction to a MoveSet using snake indices in the game.
+func testMoves(g *GameSim, moves map[string]Direction) MoveSet {
+	var ms MoveSet
+	for id, dir := range moves {
+		for i := range g.Snakes {
+			if g.Snakes[i].ID == id {
+				ms.Dir[i] = dir
+				ms.Has[i] = true
+				break
+			}
+		}
+	}
+	return ms
+}
+
 // --- Initialization ---
 
 func TestNewGameSimInitialization(t *testing.T) {
@@ -138,6 +153,46 @@ func TestClonePreservesScalarFields(t *testing.T) {
 	}
 }
 
+// --- CloneFromPool ---
+
+func TestCloneFromPoolIndependence(t *testing.T) {
+	gs := NewGameSim(11, 11, []SimSnake{
+		{ID: "a", Body: []Coord{{5, 5}, {5, 4}}, Health: 100, Length: 2},
+	}, []Coord{{3, 3}}, nil)
+
+	cl := gs.CloneFromPool()
+	cl.Snakes[0].Health = 50
+	cl.Food[0] = Coord{0, 0}
+	cl.Turn = 99
+
+	if gs.Snakes[0].Health != 100 {
+		t.Error("original snake Health changed after pooled clone mutation")
+	}
+	if gs.Food[0] != (Coord{3, 3}) {
+		t.Error("original Food changed after pooled clone mutation")
+	}
+	if gs.Turn != 0 {
+		t.Error("original Turn changed after pooled clone mutation")
+	}
+	cl.Release()
+}
+
+func TestCloneFromPoolReleaseCycle(t *testing.T) {
+	gs := NewGameSim(11, 11, []SimSnake{
+		{ID: "a", Body: []Coord{{5, 5}, {5, 4}, {5, 3}}, Health: 80, Length: 3},
+	}, nil, nil)
+
+	// Clone, use, release multiple times to test pool reuse.
+	for i := 0; i < 10; i++ {
+		cl := gs.CloneFromPool()
+		if cl.Snakes[0].Health != 80 {
+			t.Errorf("iter %d: Health = %d, want 80", i, cl.Snakes[0].Health)
+		}
+		cl.Snakes[0].Health = 0 // mutate
+		cl.Release()
+	}
+}
+
 // --- Movement ---
 
 func TestMoveSnakesAllDirections(t *testing.T) {
@@ -154,7 +209,7 @@ func TestMoveSnakesAllDirections(t *testing.T) {
 		gs := NewGameSim(11, 11, []SimSnake{
 			{ID: "a", Body: []Coord{{5, 5}, {5, 4}, {5, 3}}, Health: 100, Length: 3},
 		}, nil, nil)
-		gs.MoveSnakes(map[string]Direction{"a": tt.dir})
+		gs.MoveSnakes(testMoves(gs, map[string]Direction{"a": tt.dir}))
 		got := gs.Snakes[0].Body[0]
 		if got != tt.want {
 			t.Errorf("Move(%d): head = %v, want %v", tt.dir, got, tt.want)
@@ -167,7 +222,7 @@ func TestMoveSnakesMultiSnake(t *testing.T) {
 		{ID: "a", Body: []Coord{{2, 2}, {2, 1}}, Health: 100, Length: 2},
 		{ID: "b", Body: []Coord{{8, 8}, {8, 7}}, Health: 100, Length: 2},
 	}, nil, nil)
-	gs.MoveSnakes(map[string]Direction{"a": Up, "b": Left})
+	gs.MoveSnakes(testMoves(gs, map[string]Direction{"a": Up, "b": Left}))
 
 	if gs.Snakes[0].Body[0] != (Coord{2, 3}) {
 		t.Errorf("snake a head = %v, want {2,3}", gs.Snakes[0].Body[0])
@@ -181,13 +236,12 @@ func TestMoveSnakesTailRemoved(t *testing.T) {
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{5, 5}, {5, 4}, {5, 3}}, Health: 100, Length: 3},
 	}, nil, nil)
-	gs.MoveSnakes(map[string]Direction{"a": Up})
+	gs.MoveSnakes(testMoves(gs, map[string]Direction{"a": Up}))
 
 	s := &gs.Snakes[0]
 	if len(s.Body) != 3 {
 		t.Fatalf("body length = %d, want 3", len(s.Body))
 	}
-	// New body: {5,6}, {5,5}, {5,4} — old tail {5,3} gone
 	expected := []Coord{{5, 6}, {5, 5}, {5, 4}}
 	for i, want := range expected {
 		if s.Body[i] != want {
@@ -200,7 +254,7 @@ func TestMoveSnakesDeadSnakeSkipped(t *testing.T) {
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{5, 5}, {5, 4}}, Health: 0, Length: 2, EliminatedCause: "head-collision"},
 	}, nil, nil)
-	gs.MoveSnakes(map[string]Direction{"a": Up})
+	gs.MoveSnakes(testMoves(gs, map[string]Direction{"a": Up}))
 
 	if gs.Snakes[0].Body[0] != (Coord{5, 5}) {
 		t.Error("dead snake should not have moved")
@@ -211,10 +265,10 @@ func TestMoveSnakesMissingFromMap(t *testing.T) {
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{5, 5}, {5, 4}}, Health: 100, Length: 2},
 	}, nil, nil)
-	gs.MoveSnakes(map[string]Direction{}) // empty map
+	gs.MoveSnakes(MoveSet{}) // empty MoveSet
 
 	if gs.Snakes[0].Body[0] != (Coord{5, 5}) {
-		t.Error("snake not in map should not have moved")
+		t.Error("snake not in MoveSet should not have moved")
 	}
 }
 
@@ -222,7 +276,7 @@ func TestMoveSnakesSingleSegment(t *testing.T) {
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{3, 3}}, Health: 100, Length: 1},
 	}, nil, nil)
-	gs.MoveSnakes(map[string]Direction{"a": Right})
+	gs.MoveSnakes(testMoves(gs, map[string]Direction{"a": Right}))
 
 	s := &gs.Snakes[0]
 	if len(s.Body) != 1 {
@@ -338,7 +392,7 @@ func TestStepHealthDecrement(t *testing.T) {
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{5, 5}, {5, 4}, {5, 3}}, Health: 100, Length: 3},
 	}, nil, nil)
-	gs.Step(map[string]Direction{"a": Up})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Up}))
 	if gs.Snakes[0].Health != 99 {
 		t.Errorf("Health = %d, want 99", gs.Snakes[0].Health)
 	}
@@ -348,7 +402,7 @@ func TestStepStarvation(t *testing.T) {
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{5, 5}, {5, 4}, {5, 3}}, Health: 1, Length: 3},
 	}, nil, nil)
-	gs.Step(map[string]Direction{"a": Up})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Up}))
 	s := &gs.Snakes[0]
 	if s.IsAlive() {
 		t.Error("snake with health 1 should starve after step")
@@ -374,7 +428,7 @@ func TestStepWallCollision(t *testing.T) {
 			gs := NewGameSim(11, 11, []SimSnake{
 				{ID: "a", Body: []Coord{tt.head, {5, 5}}, Health: 100, Length: 2},
 			}, nil, nil)
-			gs.Step(map[string]Direction{"a": tt.dir})
+			gs.Step(testMoves(gs, map[string]Direction{"a": tt.dir}))
 			s := &gs.Snakes[0]
 			if s.IsAlive() {
 				t.Error("snake should be eliminated by wall")
@@ -387,12 +441,11 @@ func TestStepWallCollision(t *testing.T) {
 }
 
 func TestStepBodyCollisionOther(t *testing.T) {
-	// Snake a moves right into snake b's body.
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{3, 3}, {2, 3}}, Health: 100, Length: 2},
 		{ID: "b", Body: []Coord{{5, 3}, {4, 3}, {4, 2}}, Health: 100, Length: 3},
 	}, nil, nil)
-	gs.Step(map[string]Direction{"a": Right, "b": Up})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Right, "b": Up}))
 	if gs.Snakes[0].EliminatedCause != "body-collision" {
 		t.Errorf("snake a cause = %q, want \"body-collision\"", gs.Snakes[0].EliminatedCause)
 	}
@@ -402,22 +455,10 @@ func TestStepBodyCollisionOther(t *testing.T) {
 }
 
 func TestStepSelfCollision(t *testing.T) {
-	// 7-segment snake coiled so moving left puts head on body[5] after shift.
-	// Body: (3,3)→(4,3)→(4,2)→(3,2)→(2,2)→(2,3)→(2,4)
-	// After move left: head=(2,3), body=[{2,3},{3,3},{4,3},{4,2},{3,2},{2,2},{2,3}]
-	// Head (2,3) == body[6] → self-collision.
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{3, 3}, {4, 3}, {4, 2}, {3, 2}, {2, 2}, {2, 3}, {2, 4}}, Health: 100, Length: 7},
 	}, nil, nil)
-	// Moving left: head → (2,3). Body after move:
-	// Original 7 segments. copy shifts, old tail (2,4) dropped.
-	// Result: [(2,3),(3,3),(4,3),(4,2),(3,2),(2,2),(2,3)]
-	// Head (2,3) matches body[6]=(2,3)? No — body[6] after shift is (2,3) (old body[5]).
-	// Actually: copy(Body[1:], Body[:6]) → Body[1..6] = original Body[0..5]
-	// Body[1]=(3,3), [2]=(4,3), [3]=(4,2), [4]=(3,2), [5]=(2,2), [6]=(2,3)
-	// Body[0] = (2,3)
-	// Head (2,3) == body[6] (2,3) → YES, self-collision (seg index 6 > 0).
-	gs.Step(map[string]Direction{"a": Left})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Left}))
 	s := &gs.Snakes[0]
 	if s.IsAlive() {
 		t.Error("snake should be eliminated by self-collision")
@@ -431,7 +472,7 @@ func TestStepEatFood(t *testing.T) {
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{5, 5}, {5, 4}, {5, 3}}, Health: 50, Length: 3},
 	}, []Coord{{5, 6}}, nil)
-	gs.Step(map[string]Direction{"a": Up})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Up}))
 	s := &gs.Snakes[0]
 	if s.Health != 100 {
 		t.Errorf("Health = %d, want 100", s.Health)
@@ -451,23 +492,19 @@ func TestStepEatFoodTailPosition(t *testing.T) {
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{5, 5}, {5, 4}, {5, 3}}, Health: 50, Length: 3},
 	}, []Coord{{5, 6}}, nil)
-	gs.Step(map[string]Direction{"a": Up})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Up}))
 	s := &gs.Snakes[0]
-	// Pre-move tail was {5,3}. After growth, tail should be {5,3}.
 	if s.Tail() != (Coord{5, 3}) {
 		t.Errorf("grown tail = %v, want {5,3}", s.Tail())
 	}
 }
 
 func TestStepTwoSnakesEatSameFood(t *testing.T) {
-	// Both snakes converge on the same food at (5,5).
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{4, 5}, {3, 5}}, Health: 50, Length: 2},
 		{ID: "b", Body: []Coord{{6, 5}, {7, 5}}, Health: 50, Length: 2},
 	}, []Coord{{5, 5}}, nil)
-	gs.Step(map[string]Direction{"a": Right, "b": Left})
-	// Both heads are now at (5,5) — head-to-head with equal length, both die.
-	// But both should have eaten first (feeding before elimination).
+	gs.Step(testMoves(gs, map[string]Direction{"a": Right, "b": Left}))
 	a := &gs.Snakes[0]
 	b := &gs.Snakes[1]
 	if a.Length != 3 {
@@ -486,7 +523,7 @@ func TestStepHeadToHeadShorterDies(t *testing.T) {
 		{ID: "a", Body: []Coord{{4, 5}, {3, 5}, {2, 5}}, Health: 100, Length: 3},
 		{ID: "b", Body: []Coord{{6, 5}, {7, 5}}, Health: 100, Length: 2},
 	}, nil, nil)
-	gs.Step(map[string]Direction{"a": Right, "b": Left})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Right, "b": Left}))
 	a := &gs.Snakes[0]
 	b := &gs.Snakes[1]
 	if !a.IsAlive() {
@@ -505,7 +542,7 @@ func TestStepHeadToHeadEqualBothDie(t *testing.T) {
 		{ID: "a", Body: []Coord{{4, 5}, {3, 5}}, Health: 100, Length: 2},
 		{ID: "b", Body: []Coord{{6, 5}, {7, 5}}, Health: 100, Length: 2},
 	}, nil, nil)
-	gs.Step(map[string]Direction{"a": Right, "b": Left})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Right, "b": Left}))
 	a := &gs.Snakes[0]
 	b := &gs.Snakes[1]
 	if a.IsAlive() || b.IsAlive() {
@@ -517,16 +554,12 @@ func TestStepHeadToHeadEqualBothDie(t *testing.T) {
 }
 
 func TestStepHeadToHeadThreeSnakes(t *testing.T) {
-	// Three snakes all converge on (5,5). a=3, b=2, c=3.
-	// a and c survive (equal max), b dies. But a and c also collide (equal), so all die.
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{4, 5}, {3, 5}, {2, 5}}, Health: 100, Length: 3},
 		{ID: "b", Body: []Coord{{5, 4}, {5, 3}}, Health: 100, Length: 2},
 		{ID: "c", Body: []Coord{{6, 5}, {7, 5}, {8, 5}}, Health: 100, Length: 3},
 	}, nil, nil)
-	gs.Step(map[string]Direction{"a": Right, "b": Up, "c": Left})
-	// All three heads at (5,5). Max length = 3, count = 2 (a,c). b shorter → dies.
-	// a and c both at max but maxCount=2 → both die too.
+	gs.Step(testMoves(gs, map[string]Direction{"a": Right, "b": Up, "c": Left}))
 	for _, s := range gs.Snakes {
 		if s.IsAlive() {
 			t.Errorf("snake %s should be eliminated in 3-way head-to-head", s.ID)
@@ -541,20 +574,17 @@ func TestStepHazardDamage(t *testing.T) {
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{5, 5}, {5, 4}, {5, 3}}, Health: 100, Length: 3},
 	}, nil, []Coord{{5, 6}})
-	gs.Step(map[string]Direction{"a": Up})
-	// Health: 100 - 1 (natural) - 14 (hazard) = 85
+	gs.Step(testMoves(gs, map[string]Direction{"a": Up}))
 	if gs.Snakes[0].Health != 85 {
 		t.Errorf("Health = %d, want 85", gs.Snakes[0].Health)
 	}
 }
 
 func TestStepEatFoodOnHazard(t *testing.T) {
-	// Food and hazard on same cell. Snake eats: hazard damage first, then feed restores to 100.
-	// Actually: phase order is health--, hazard, then feed. So: 100-1-14=85, then feed→100.
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{5, 5}, {5, 4}, {5, 3}}, Health: 100, Length: 3},
 	}, []Coord{{5, 6}}, []Coord{{5, 6}})
-	gs.Step(map[string]Direction{"a": Up})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Up}))
 	s := &gs.Snakes[0]
 	if s.Health != 100 {
 		t.Errorf("Health = %d, want 100 (food restores after hazard)", s.Health)
@@ -569,9 +599,8 @@ func TestStepAlreadyEliminatedSkipped(t *testing.T) {
 		{ID: "a", Body: []Coord{{5, 5}, {5, 4}}, Health: 0, Length: 2, EliminatedCause: "wall"},
 		{ID: "b", Body: []Coord{{3, 3}, {3, 2}}, Health: 100, Length: 2},
 	}, nil, nil)
-	gs.Step(map[string]Direction{"a": Up, "b": Up})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Up, "b": Up}))
 	a := &gs.Snakes[0]
-	// Dead snake should not have moved or changed.
 	if a.Body[0] != (Coord{5, 5}) {
 		t.Error("dead snake should not have moved")
 	}
@@ -584,24 +613,22 @@ func TestStepTurnIncrement(t *testing.T) {
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{5, 5}, {5, 4}}, Health: 100, Length: 2},
 	}, nil, nil)
-	gs.Step(map[string]Direction{"a": Up})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Up}))
 	if gs.Turn != 1 {
 		t.Errorf("Turn = %d, want 1", gs.Turn)
 	}
-	gs.Step(map[string]Direction{"a": Up})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Up}))
 	if gs.Turn != 2 {
 		t.Errorf("Turn = %d, want 2", gs.Turn)
 	}
 }
 
 func TestStepSimultaneousBodyCollision(t *testing.T) {
-	// a moves right → head (4,5). b moves up → body [(5,6),(5,5),(4,5)].
-	// a head hits b body[2] → body-collision. b survives.
 	gs := NewGameSim(11, 11, []SimSnake{
 		{ID: "a", Body: []Coord{{3, 5}, {3, 4}, {3, 3}}, Health: 100, Length: 3},
 		{ID: "b", Body: []Coord{{5, 5}, {4, 5}, {4, 4}}, Health: 100, Length: 3},
 	}, nil, nil)
-	gs.Step(map[string]Direction{"a": Right, "b": Up})
+	gs.Step(testMoves(gs, map[string]Direction{"a": Right, "b": Up}))
 	a := &gs.Snakes[0]
 	b := &gs.Snakes[1]
 	if a.IsAlive() {
