@@ -33,10 +33,21 @@ func safeMoveCount(g *GameSim, s *SimSnake) int {
 	return count
 }
 
+// clamp01 clamps x to [0.0, 1.0].
+func clamp01(x float64) float64 {
+	if x < 0 {
+		return 0
+	}
+	if x > 1 {
+		return 1
+	}
+	return x
+}
+
 // Evaluate scores a GameSim position from myIdx's perspective.
 // Returns -1000 if we're dead, +1000 if all opponents are dead,
-// otherwise Voronoi territory difference + length advantage +
-// head-to-head pressure + opponent confinement + food urgency.
+// otherwise phase-weighted: Voronoi territory + length advantage +
+// head-to-head pressure + opponent confinement + food urgency + food control.
 func Evaluate(g *GameSim, myIdx int) float64 {
 	me := &g.Snakes[myIdx]
 	if !me.IsAlive() {
@@ -55,14 +66,40 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 		return 1000
 	}
 
-	// Territory score (dominant factor).
+	// Phase blend factors (continuous 0.0-1.0).
+	earlyByLen := clamp01(float64(8-me.Length) / 4.0)  // 1.0@len4, 0.0@len8+
+	earlyByTurn := clamp01(float64(35-g.Turn) / 20.0)  // 1.0@turn15, 0.0@turn35+
+	earlyBlend := earlyByLen
+	if earlyByTurn > earlyBlend {
+		earlyBlend = earlyByTurn
+	}
+
+	totalBody := 0
+	for i := range g.Snakes {
+		if g.Snakes[i].IsAlive() {
+			totalBody += g.Snakes[i].Length
+		}
+	}
+	boardFill := float64(totalBody) / float64(g.Width*g.Height)
+	lateBlend := clamp01((boardFill - 0.30) / 0.20) // 0.0@30%, 1.0@50%+
+
+	// Territory score with phase modulation.
 	vr := VoronoiTerritory(g, myIdx)
-	score := float64(vr.MyTerritory - vr.OppTerritory)
+	if vr.IsPartitioned && lateBlend < 0.5 {
+		lateBlend = 0.5
+	}
+	wTerritory := 1.0 - 0.2*earlyBlend + 0.3*lateBlend
+	score := wTerritory * float64(vr.MyTerritory-vr.OppTerritory)
+
+	// Early-game food control.
+	score += 1.5 * earlyBlend * float64(vr.MyFood)
+
+	// Phase-modulated weights.
+	wLen := 2.0 + 1.0*earlyBlend - 0.5*lateBlend
+	wH2H := 5.0 - 2.0*lateBlend
 
 	// Accumulate per-opponent scores.
 	myHead := me.Head()
-	wLen := 2.0
-	wH2H := 5.0
 	for i := range g.Snakes {
 		opp := &g.Snakes[i]
 		if i == myIdx || !opp.IsAlive() {
@@ -92,8 +129,9 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 		}
 	}
 
-	// Food urgency: sharp scaling when health < 40.
-	if me.Health < 40 && len(g.Food) > 0 {
+	// Food urgency: phase-modulated threshold.
+	foodThreshold := 40 + int(15*earlyBlend)
+	if me.Health < foodThreshold && len(g.Food) > 0 {
 		head := me.Head()
 		minDist := 999
 		for _, f := range g.Food {
@@ -102,7 +140,7 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 				minDist = d
 			}
 		}
-		foodWeight := float64(40-me.Health) * 0.5 // 0 at health=40, 20 at health=0
+		foodWeight := float64(foodThreshold-me.Health) * 0.5
 		score += foodWeight * (1.0 / float64(max(minDist, 1)))
 	}
 

@@ -27,8 +27,8 @@ API types (`Coord`, `Battlesnake` in `models.go`) are converted to `logic.Coord`
 - `:8080` — current snake (all normal targets)
 - `:8081` — previous snapshot (`make compare`)
 
-## Current state (Iter 16 — VoronoiResult infrastructure)
-Rich Voronoi: `VoronoiResult` struct returns territory counts, food ownership (MyFood/OppFood), and partition detection (IsPartitioned) at zero extra cost (~1048ns/0 allocs). Eval uses territory only — food control and partition signals were tested but hurt or were neutral (see failed experiments). BRS node cost: ~1.1µs/0 allocs unchanged from Iter 14.
+## Current state (Iter 17 — Game-phase adaptive eval)
+Phase-aware eval: continuous blend factors (`earlyBlend`, `lateBlend`) modulate eval weights. Early game boosts wLen (3.0), food control (1.5×MyFood), and food urgency threshold (55); late game boosts territory (1.3×) and reduces h2h (3.0). Uses VoronoiResult infrastructure from Iter 16. 59% vs Iter 16 (N=100). Evaluate: ~1090ns/0 allocs (unchanged). BRS node: ~1.1µs/0 allocs.
 
 ## Bench / version comparison
 - `make bench [N=10]` — self-play; turns are the meaningful metric (A/B split is noise)
@@ -36,14 +36,14 @@ Rich Voronoi: `VoronoiResult` struct returns territory counts, food ownership (M
 - `-save FILE` flag writes JSONL: `{"n":1,"winner":"A","turns":42,"seed":123}` — seed replays exact game with `--seed`
 - Speed: ~100 games in 4s with 16 workers; all local, no network overhead
 
-Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 ~417, v11 ~197, v12 ~213, v13 ~200, v14 ~215.
+Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 ~417, v11 ~197, v12 ~213, v13 ~200, v14 ~215, v17 ~451.
 `make bench` manages the server lifecycle automatically; `go run ./cmd/bench` requires a server already running on the target port.
 
 **Note:** Paranoid minimax (retained in `BestMove`) degrades at depth 7+. BRS in `BestMoveIterative` breaks this ceiling.
 
-**Next:** Game-phase eval (Iter 17), move ordering improvement (Iter 18).
+**Next:** Move ordering improvement (Iter 18).
 
-**Roadmap rationale:** Every past win came from deeper search or better evaluation. Generic search pruning doesn't work at BRS's low BF. Constant-weight food signals are noise. The next lever is **game-phase-aware eval** — different weights for early/mid/late game — using VoronoiResult data (MyFood, IsPartitioned) shipped in Iter 16.
+**Roadmap rationale:** Every past win came from deeper search or better evaluation. Generic search pruning doesn't work at BRS's low BF. Phase-gated eval (Iter 17) proved that adaptive weights beat constant weights — the lever is eval quality, not search depth.
 
 ## Failed experiments (do NOT retry without new preconditions)
 

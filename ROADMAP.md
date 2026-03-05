@@ -19,11 +19,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iteration 15 (Iter 14 shipped, Iter 15 failed experiment) |
-| **Next** | Iteration 16 |
+| **Completed** | Iteration 17 (game-phase adaptive eval) |
+| **Next** | Iteration 18 |
 | **Baseline** | v0 random safe-move: ~68 avg turns (self-play) |
-| **Current** | v14 Zero-alloc perf; ~215 avg turns self-play, 56% vs v12. BRS node ~1.1µs/0 allocs. |
-| **Key insight** | Search pruning (LMR/NMP/extensions) doesn't work at BRS's low branching factor (4×4=16). Remaining gains are in eval richness — food control, territory quality, game phases. |
+| **Current** | v17 Phase eval; ~451 avg turns self-play, 59% vs v16. Evaluate ~1090ns/0 allocs (unchanged). |
+| **Key insight** | Phase-gated eval weights are the lever — constant-weight food signals are noise, but early=grow/mid=territory/late=survive works. Every past win came from deeper search or better eval. |
 
 ---
 
@@ -643,9 +643,9 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 > making the eval understand the board like a human player: food control, territory quality, game
 > phases, and strategic positioning. Once the eval has richer signals, depth amplifies them.
 
-### Iteration 16 — Rich Voronoi + Food Control
+### Iteration 16 — Rich Voronoi + Food Control ✅
 
-**Status:** TODO
+**Status:** DONE
 **Depends on:** Iteration 14
 
 **Goal:** Extract richer data from the existing Voronoi BFS (which already visits every cell) and add food control — the single biggest missing eval signal.
@@ -684,36 +684,42 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 
 ---
 
-### Iteration 17 — Game Phase + Adaptive Weights
+### Iteration 17 — Game Phase + Adaptive Weights ✅
 
-**Status:** TODO
+**Status:** DONE
 **Depends on:** Iteration 16
 
 **Goal:** The eval uses identical weights on turn 1 and turn 300, but the optimal strategy shifts dramatically across the game. Detect the phase and adjust weight emphasis.
 
-**Phase detection (cheap heuristics):**
-| Phase | Condition | Strategy |
-|-------|-----------|----------|
-| **Early** | `myLength < 6 \|\| turn < 25` | Grow. Food matters most, territory is noise (snakes too short to block). |
-| **Mid** | default | Territory control + aggression. Current weights roughly right. |
-| **Late** | `boardFillPercent > 45% \|\| isPartitioned` | Space-filling + food-in-territory. Survival dominant. |
+**What was built:**
 
-`boardFillPercent` = total alive snake body cells / board cells.
+Continuous blend factors (`earlyBlend`, `lateBlend`) ranging 0.0-1.0, computed from game state. Mid-game = both near 0 = current weights unchanged. No discrete enum, no abrupt thresholds.
 
-**Weight adjustments:**
-- **Early:** boost food urgency 2×, reduce territory weight 0.5×, reduce aggression (wH2H) 0.5× — can't kill when everyone is the same size
-- **Mid:** current weights (territory dominant, aggression secondary)
-- **Late:** boost food control 2×, boost territory weight, reduce aggression — combat is rare, survival is everything
+**Phase detection (~12 lines, zero alloc):**
+- `earlyBlend`: max of length-based (1.0@len4, 0.0@len8+) and turn-based (1.0@turn15, 0.0@turn35+)
+- `lateBlend`: board fill ratio (0.0@30%, 1.0@50%+), boosted to 0.5 when `vr.IsPartitioned`
 
-**Implementation:** Add a `gamePhase(g *GameSim, myIdx int) int` function. In `Evaluate()`, multiply weights by phase-dependent factors. ~20-30 lines total.
+**Weight modulation (final tuned values):**
+| Signal | Mid (base) | Early (blend=1) | Late (blend=1) | Formula |
+|--------|-----------|-----------------|-----------------|---------|
+| Territory | 1.0x | 0.8x | 1.3x | `1.0 - 0.2*early + 0.3*late` |
+| wLen | 2.0 | 3.0 | 1.5 | `2.0 + 1.0*early - 0.5*late` |
+| wH2H | 5.0 | 5.0 | 3.0 | `5.0 - 2.0*late` |
+| Food threshold | 40 | 55 | 40 | `40 + int(15*early)` |
+| Food control (NEW) | 0 | 1.5/food | 0 | `1.5*early * vr.MyFood` |
+| Confinement | 50/15 | unchanged | unchanged | — |
 
-**Files:**
+**Tuning notes (deviations from initial plan):**
+- Territory early reduction: 0.2x (not 0.5x). Halving territory made the h2h bonus too weak to overcome territory disadvantage of being near an opponent — broke existing test.
+- wH2H early: kept at 5.0 (not reduced). When longer, h2h aggression is always valuable — reducing it early hurts because early game is when h2h kills happen most (small snakes, easy to trap).
+
+**Results:** 59% win rate vs Iter 16 (N=100). Avg turns: 451. Evaluate: ~1090ns/0 allocs (unchanged).
+
+**Files changed:**
 | File | Action |
 |------|--------|
-| `logic/eval.go` | Add `gamePhase()`, apply phase multipliers to existing weights |
-| `logic/eval_test.go` | Test phase detection, verify weight shifts at boundaries |
-
-**Verify:** `make compare N=100` — target: >53%. Phase changes are subtle but compound over many games.
+| `logic/eval.go` | Added `clamp01`, phase blend computation, weight modulation, food control signal |
+| `logic/eval_test.go` | 4 new tests: early-phase length, food control, late-phase territory, phase blend continuity |
 
 ---
 
