@@ -19,11 +19,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iteration 13 |
-| **Next** | Iteration 14 |
+| **Completed** | Iteration 15 (Iter 14 shipped, Iter 15 failed experiment) |
+| **Next** | Iteration 16 |
 | **Baseline** | v0 random safe-move: ~68 avg turns (self-play) |
-| **Current** | v13 Eval hardening + QS infra; ~200 avg turns self-play, ~50% vs v12 (neutral in 1v1) |
-| **Key insight** | QS at BRS leaves too expensive (Clone+Step overhead steals main search depth). Eval N-opponent generalization ready for multi-snake. |
+| **Current** | v14 Zero-alloc perf; ~215 avg turns self-play, 56% vs v12. BRS node ~1.1µs/0 allocs. |
+| **Key insight** | Search pruning (LMR/NMP/extensions) doesn't work at BRS's low branching factor (4×4=16). Remaining gains are in eval richness — food control, territory quality, game phases. |
 
 ---
 
@@ -573,10 +573,11 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 
 ---
 
-### Iteration 14 — Performance Optimization
+### Iteration 14 — Performance Optimization ✅
 
-**Status:** TODO
+**Status:** DONE
 **Depends on:** Iteration 13
+**Snapshot:** `snapshots/haruko-ad0f0f3`
 
 **Goal:** Reduce per-node cost so BRS reaches 2-3 extra plies within 300ms. This is the highest-leverage change available — Iter 11 showed that +1 ply = 65% win rate, and Iter 13 showed that adding nodes at current cost is a net loss.
 
@@ -605,9 +606,9 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 
 ---
 
-### Iteration 15 — Search Pruning + Extensions (Free Depth)
+### Iteration 15 — Search Pruning + Extensions (Free Depth) ✅ (FAILED)
 
-**Status:** TODO
+**Status:** DONE — all techniques tested, none effective. See Findings.
 **Depends on:** Iteration 14
 
 **Goal:** Get more effective search depth without adding nodes. Standard game-tree pruning techniques that are well-proven in chess engines and translate cleanly to BRS.
@@ -634,72 +635,203 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 
 ---
 
-### Iteration 16 — Endgame Detection
+## Phase 7: Strategic Evaluation
+
+> **Why eval richness over search depth?** Iterations 10-15 proved that search pruning and extensions
+> don't work at BRS's low branching factor (4×4=16). Every major win came from better evaluation
+> (v7: 98%, v8: 88%) or more effective depth (v11: 65%, v12: 59%). The remaining gains are in
+> making the eval understand the board like a human player: food control, territory quality, game
+> phases, and strategic positioning. Once the eval has richer signals, depth amplifies them.
+
+### Iteration 16 — Rich Voronoi + Food Control
 
 **Status:** TODO
 **Depends on:** Iteration 14
 
-**Goal:** When the board is partitioned (snakes can't reach each other), switch from BRS combat search to space-filling mode.
+**Goal:** Extract richer data from the existing Voronoi BFS (which already visits every cell) and add food control — the single biggest missing eval signal.
 
-**Why promoted from stretch:** In long games (~200+ turns), the board frequently partitions. The BRS search wastes the entire 300ms budget modeling an opponent who can't interact with us. Detecting this and switching strategy should noticeably improve endgame survival rate, which directly impacts self-play turn count.
+**Why this is high-impact:** Competitive Battlesnake is about two things: don't die and control food. The current eval has strong "don't die" signals (territory count, confinement, safe moves) but almost no "control food" signal. Food urgency only activates below health 40 and measures distance, not whether food is in safe territory. Meanwhile, the Voronoi BFS already computes territory ownership for every cell — extracting food/partition data costs near-zero extra compute.
 
 **Approach:**
 
-1. **Partition detection:** After `VoronoiTerritory` BFS, check if the territory sets overlap. If every cell is claimed by exactly one snake (no ties in the frontier), the board is partitioned. This is a byproduct of the existing BFS — just check if any cell was tied at the boundary. Near-zero additional cost.
+1. **Return a struct instead of (int, int):** Change `VoronoiTerritory` to return a `VoronoiResult` struct:
+   ```go
+   type VoronoiResult struct {
+       MyTerritory   int  // cells we own
+       OppTerritory  int  // cells opponents own
+       MyFood        int  // food items in our territory
+       OppFood       int  // food items in opponent territory
+       IsPartitioned bool // no tied frontier cells → snakes separated
+   }
+   ```
+   After the existing ownership counting loop, iterate over `g.Food` and check `owner[f.Y*width+f.X]`. For partition detection, track whether any frontier cell was tied during BFS.
 
-2. **Space-filling strategy:** When partitioned:
-   - Skip BRS entirely (saves 300ms of wasted search)
-   - Pick the move that maximizes flood-fill reachable cells in our partition
-   - Tiebreak: prefer moves toward food (extend health to outlast opponent)
-   - Consider simple longest-path heuristic: prefer moves that don't cut off future options (avoid creating dead-end pockets in our territory)
+2. **Food control eval signal:** Add `wFoodControl * (myFood - oppFood)` to `Evaluate()`. Suggested `wFoodControl = 3.0`. A snake controlling more food can sustain itself and grow; a snake with territory but no food will eventually starve.
 
-3. **Gradual transition (optional refinement):** If partition is "almost" complete (1-2 contested cells), reduce BRS budget and blend with space-filling score.
+3. **Starving-in-territory penalty:** When `health < 60` AND `myFood == 0`, apply a penalty. We own space but can't eat — this position is worse than the raw territory count suggests.
+
+4. **Partition short-circuit:** When `IsPartitioned` is true, skip BRS entirely in `BestMoveIterative`. Instead, pick the move that maximizes flood-fill reachable cells, tiebreaking toward food. This saves the full 300ms of BRS searching against an unreachable opponent.
 
 **Files:**
 | File | Action |
 |------|--------|
-| `logic/voronoi.go` | Add `IsPartitioned(g, myID) bool` using existing BFS data |
-| `logic/eval.go` or `logic/endgame.go` | Space-filling move selection |
-| `logic/search.go` | Check partition before BRS, short-circuit if partitioned |
+| `logic/voronoi.go` | Change return type to `VoronoiResult`, add food counting + partition flag |
+| `logic/eval.go` | Update `Evaluate` to use struct fields, add food control + starving penalty |
+| `logic/search.go` | Partition check before BRS → space-filling fallback |
+| `logic/voronoi_test.go` | Test food counting, partition detection |
 
-**Verify:** `make compare N=100` — look for longer average turns (better endgame survival) and win rate improvement.
+**Verify:** `make compare PREV=snapshots/haruko-<v14> N=100` — target: >55%.
 
 ---
 
-### Iteration 17 — Parameter Tuning (Simplified)
+### Iteration 17 — Game Phase + Adaptive Weights
 
 **Status:** TODO
-**Depends on:** Iteration 15
+**Depends on:** Iteration 16
 
-**Goal:** Re-calibrate eval weights for the current search (BRS + pruning). The weights (wLen=2.0, wH2H=5.0, confinement 50/15, food urgency scaling) were hand-tuned in Iter 8 for paranoid minimax at depth 3. BRS at depth 14+ with pruning may favor different weight ratios.
+**Goal:** The eval uses identical weights on turn 1 and turn 300, but the optimal strategy shifts dramatically across the game. Detect the phase and adjust weight emphasis.
 
-**Why simplified (no tournament infrastructure):** Building a full tournament runner with env vars, configs, and hill-climbing is over-engineered for 5 weights. Just run targeted `make compare` experiments.
+**Phase detection (cheap heuristics):**
+| Phase | Condition | Strategy |
+|-------|-----------|----------|
+| **Early** | `myLength < 6 \|\| turn < 25` | Grow. Food matters most, territory is noise (snakes too short to block). |
+| **Mid** | default | Territory control + aggression. Current weights roughly right. |
+| **Late** | `boardFillPercent > 45% \|\| isPartitioned` | Space-filling + food-in-territory. Survival dominant. |
+
+`boardFillPercent` = total alive snake body cells / board cells.
+
+**Weight adjustments:**
+- **Early:** boost food urgency 2×, reduce territory weight 0.5×, reduce aggression (wH2H) 0.5× — can't kill when everyone is the same size
+- **Mid:** current weights (territory dominant, aggression secondary)
+- **Late:** boost food control 2×, boost territory weight, reduce aggression — combat is rare, survival is everything
+
+**Implementation:** Add a `gamePhase(g *GameSim, myIdx int) int` function. In `Evaluate()`, multiply weights by phase-dependent factors. ~20-30 lines total.
+
+**Files:**
+| File | Action |
+|------|--------|
+| `logic/eval.go` | Add `gamePhase()`, apply phase multipliers to existing weights |
+| `logic/eval_test.go` | Test phase detection, verify weight shifts at boundaries |
+
+**Verify:** `make compare N=100` — target: >53%. Phase changes are subtle but compound over many games.
+
+---
+
+### Iteration 18 — Territory Shape Quality
+
+**Status:** TODO
+**Depends on:** Iteration 16
+
+**Goal:** Not all territory is equal — 20 cells in a compact blob is far better than 20 cells in a thin corridor. Add territory quality signals to the eval.
+
+**Approach:**
+
+1. **Corridor penalty:** After Voronoi BFS, count cells in our territory that have ≤1 neighbor also in our territory ("thin" cells). High ratio of thin cells = dangerous corridor shape. Penalize. This reuses the `owner[]` array from `VoronoiResult`.
+
+2. **Center proximity bonus:** Compute average distance of our territory cells to board center. Central territory offers more escape routes and strategic flexibility. Positions pushed to edges/corners are worse even with the same cell count.
+
+3. **Add to VoronoiResult:**
+   ```go
+   MyThinCells  int     // our cells with ≤1 owned neighbor
+   MyCenterDist float64 // avg distance of our cells to board center
+   ```
+
+**Eval integration:**
+- `score -= wCorridor * float64(myThinCells) / float64(max(myTerritory, 1))` — penalize corridor ratio
+- `score -= wCenter * myCenterDist` — prefer central territory
+
+**Files:**
+| File | Action |
+|------|--------|
+| `logic/voronoi.go` | Add thin-cell count + center distance to `VoronoiResult` |
+| `logic/eval.go` | Add corridor penalty + center proximity to `Evaluate()` |
+| `logic/voronoi_test.go` | Test thin-cell counting on known shapes |
+
+**Verify:** `make compare N=100` — target: >53%.
+
+---
+
+### Iteration 19 — Chokepoint Awareness
+
+**Status:** TODO
+**Depends on:** Iteration 18
+
+**Goal:** Identify narrow passages (chokepoints) that control access between board regions. Controlling chokepoints lets us cut off the opponent; failing to defend them gets us trapped.
+
+**Why separate from Iter 18:** Corridor penalty (Iter 18) measures our own territory shape. Chokepoint awareness measures the board's topology — where can a single body segment cut off a large region? This requires different algorithmic work (articulation point detection or similar) with uncertain ROI, so it's isolated.
+
+**Approach:**
+
+1. **Simple chokepoint detection:** After Voronoi BFS, for each cell in the "frontier" (tied cells between territories), check if removing it would disconnect a region. A cell is a chokepoint if it has exactly 2 passable neighbors that aren't adjacent to each other.
+
+2. **Eval signal:** Bonus for being closer to chokepoints than the opponent (we can claim them first). Penalty if the opponent controls a chokepoint that restricts our territory.
+
+3. **Lighter alternative if articulation points are too expensive:** Count "frontier cells" (contested cells between territories). Fewer frontier cells = more defensible boundary. Score compactness of the frontier.
+
+**Files:**
+| File | Action |
+|------|--------|
+| `logic/voronoi.go` | Chokepoint detection (or frontier compactness) |
+| `logic/eval.go` | Chokepoint proximity/control signal |
+
+**Verify:** `make compare N=100`. If <50%, this is a failed experiment — note in Findings and move on.
+
+**Risk:** Chokepoint detection may be too expensive or too noisy for the 300ms budget. The lighter frontier-compactness alternative is the fallback.
+
+---
+
+### Iteration 20 — Move Ordering by Quick Eval
+
+**Status:** TODO
+**Depends on:** Iteration 16
+
+**Goal:** Order BRS root moves (and optionally interior moves) by a fast heuristic estimate so alpha-beta cutoffs happen earlier.
+
+**Approach:**
+
+1. **Quick move score (no Clone/Step):** For each of our 4 moves, compute a fast estimate:
+   - `safeMoveCount` from the resulting head position (boundary + body check)
+   - Manhattan distance to nearest food (lower = better when hungry)
+   - Whether the move goes toward board center vs edge
+   - Result: simple weighted sum, ~50ns per move
+
+2. **Sort moves by quick score** before passing to BRS. PV and killer moves still take priority; quick eval orders the remaining 2-3 moves.
+
+3. **Interior node ordering (optional):** Apply the same quick eval inside `brsMax` for non-TT, non-killer moves. Marginal gain since BRS only has 4 moves, but near-zero cost.
+
+**Why after eval improvements:** The quick eval should reflect the same priorities as the full eval. Once Iter 16-18 have established what matters (food control, territory quality, center proximity), the quick eval can approximate those signals cheaply.
+
+**Files:**
+| File | Action |
+|------|--------|
+| `logic/search.go` | `quickMoveScore()` function, integrate into `orderedMoves` |
+
+**Verify:** `make compare N=100` — target: >52%.
+
+---
+
+### Iteration 21 — Parameter Tuning
+
+**Status:** TODO
+**Depends on:** Iterations 16-18
+
+**Goal:** Systematically tune all eval weights now that the eval has rich, meaningful signals.
+
+**Weights to tune (~8-10):**
+- Territory (implicit 1.0), food control (`wFoodControl`), length advantage (`wLen`), H2H pressure (`wH2H`)
+- Confinement (50/15), corridor penalty (`wCorridor`), center proximity (`wCenter`)
+- Phase multipliers (early food boost, late territory boost)
 
 **Approach:**
 - One weight at a time: double it, halve it, compare N=100 against current best
-- Start with the highest-leverage weights: territory (implicit 1.0), confinement (50/15), h2h (5.0)
-- If a change wins >55%, keep it. If <50%, revert. If 50-55%, it's noise — skip.
-- Total: ~10-15 compare runs, ~30 minutes of compute
+- Start with the new signals (food control, corridor, center) since they've never been tuned
+- If >55%, keep. If <50%, revert. If 50-55%, noise — skip.
+- ~15-20 compare runs total
 
 **Files:**
 | File | Action |
 |------|--------|
-| `logic/eval.go` | Adjust weights based on results |
-
----
-
-### Iteration 18 — QS Retry (Conditional)
-
-**Status:** TODO (conditional on Iter 14 results)
-**Depends on:** Iteration 14
-
-**Goal:** Re-test quiescence search with cheaper per-node cost.
-
-**Precondition:** Iter 14 must reduce Clone+Step cost by at least 2× (measured via benchmarks). If it doesn't, skip this iteration entirely.
-
-**Approach:** Wire existing `qsMax`/`qsMin` from Iter 13 into BRS leaf nodes. Start with qsMaxDepth=1, tight triggers (dist≤1, safeMoves==0). Compare vs pre-QS baseline.
-
-**If still ≤50%:** QS is not viable for Battlesnake at 300ms budget. Close this line of investigation permanently and note in Findings. The volatile-position extensions from Iter 15 are the replacement.
+| `logic/eval.go` | Adjust weights based on A/B results |
 
 ---
 
@@ -723,11 +855,14 @@ Track all snapshots here for easy reference in `make compare` commands.
 | 11 | `snapshots/haruko-0bf91d3` | ~197 (self-play), 65% vs v10 | Transposition table + Zobrist hashing, maxDepth 5→6 |
 | 12 | `snapshots/haruko-cee3f49` | ~213 (self-play), 59% vs v11 | Best-Reply Search (algorithm change) |
 | 13 | — | ~200 (self-play), ~50% vs v12 | Eval N-opponent generalization + QS infra (not wired — too expensive) |
-| 14 | | | Performance optimization (alloc reduction, map→array) |
-| 15 | | | Search pruning + extensions (LMR, NMP, volatile extensions) |
-| 16 | | | Endgame detection (partition → space-filling) |
-| 17 | | | Parameter tuning (simplified, no tournament infra) |
-| 18 | | | QS retry (conditional on Iter 14 perf gains) |
+| 14 | `snapshots/haruko-ad0f0f3` | ~215 (self-play), 56% vs v12 | Zero-alloc perf: MoveSet, sync.Pool, pooled Voronoi |
+| 15 | — | — | Failed experiment: search pruning (LMR/NMP/extensions) not effective for BRS |
+| 16 | | | Rich Voronoi + food control + partition short-circuit |
+| 17 | | | Game phase detection + adaptive eval weights |
+| 18 | | | Territory shape quality (corridor penalty, center proximity) |
+| 19 | | | Chokepoint awareness (uncertain ROI — may fail) |
+| 20 | | | Move ordering by quick eval |
+| 21 | | | Parameter tuning (all weights, post eval enrichment) |
 
 ---
 
@@ -782,6 +917,20 @@ The last 4 iterations revealed a clear pattern: **more effective depth = more wi
 - **Changes that reduce node count for same depth win modestly** (Iter 10). With branching factor 4, there's limited room for pruning gains.
 - **Changes that add nodes at current cost lose** (Iter 13). Each Clone+Step+Evaluate costs the same regardless of depth, so adding QS nodes steals from main search.
 - **Implication:** The path forward is either (1) make nodes cheaper (Iter 14 perf), or (2) get free depth via pruning — search fewer nodes but deeper in the important lines (Iter 15 LMR/NMP/extensions).
+
+### Search Pruning Doesn't Work at Low Branching Factor (Iter 15)
+LMR, NMP, and volatile position extensions were all tested in BRS — every combination performed ≤50% vs Iter 14:
+
+| Config | Win rate vs v14 (N=100) |
+|--------|------------------------|
+| All three (LMR + NMP + extensions) | ~48.5% |
+| Extensions only | 42% |
+| LMR only (index≥2) | 50% |
+| NMP only | 47% |
+| LMR + NMP | 39% (compound errors) |
+
+- **Root cause:** BRS has only 4×4=16 nodes per full ply pair. Alpha-beta with TT+killers already prunes efficiently. These techniques are designed for high-BF games (chess ~35). With only 4 moves, reducing/pruning any of them loses too much information.
+- **Do NOT retry** generic search pruning for BRS. Future search improvements should focus on game-specific heuristics (move ordering by eval, not generic index-based ordering).
 
 ### Eval > Search Depth (Iter 5-7)
 Deeper search with a bad eval is counterproductive. v6 (depth 3, space-only eval) lost to v2 (flood-fill heuristic). Only after Voronoi territory eval (v7) did deeper search add value. Always fix the eval before optimizing search.
