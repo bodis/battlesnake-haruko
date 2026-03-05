@@ -578,60 +578,128 @@ The game simulator is the foundation for all search-based AI. It must replicate 
 **Status:** TODO
 **Depends on:** Iteration 13
 
-**Goal:** Reduce allocations in the hot path (Clone, Step, Evaluate) so each node is cheaper, squeezing 1-2 extra plies within the 300ms budget.
+**Goal:** Reduce per-node cost so BRS reaches 2-3 extra plies within 300ms. This is the highest-leverage change available — Iter 11 showed that +1 ply = 65% win rate, and Iter 13 showed that adding nodes at current cost is a net loss.
 
-**Why now (not earlier):** Under paranoid minimax at depth 6, the search finished within budget — making nodes cheaper just meant finishing faster with unused time. Now that BRS enables depth 10-12, per-node cost directly translates to extra plies. Every ~4× speedup = +1 ply.
+**Approach: profile first, then fix top hotspots.**
 
-**Secondary goal:** Cheaper Clone+Step may also make quiescence search viable (see Iter 13 findings — QS failed because each QS node costs as much as a BRS node). After optimization, re-test wiring `qsMax`/`qsMin` into BRS leaves.
+1. **Profile:** `go tool pprof` CPU + alloc on a bench run. Identify where Clone+Step+Evaluate spend time.
+2. **Replace `map[string]Direction` with index-based arrays:** `Step` and `brsMin` allocate a map per node. Use `[MaxSnakes]Direction` keyed by snake slice index instead. This is the single biggest allocation in the hot loop.
+3. **`sync.Pool` for GameSim clones:** Pool pre-allocated `GameSim` + snake body slices. `Clone()` pulls from pool, search returns after use. Eliminates GC pressure from thousands of short-lived clones.
+4. **Pre-size Voronoi slices:** `VoronoiTerritory` allocates `owner`, `dist`, `blocked` arrays on every call. Use pooled or stack-allocated arrays (board is always 11×11 = 121 cells).
+5. **`Step` micro-optimizations:** The `eaten` slice, `headMap`, and `elims` slice allocate every call. Use fixed-size arrays.
 
-**Techniques:**
-1. **Profile first:** `go tool pprof` on a bench run under BRS, fix the top 3 allocation hotspots
-2. **`sync.Pool` for GameSim clones:** Pool pre-allocated GameSim structs, reset and reuse instead of allocating
-3. **Pre-allocated slice backing arrays:** Clone uses `copy()` into pooled slices instead of `make()`
-4. **Avoid map allocations in Step/search:** Use fixed-size arrays for move maps (4 snakes max × 4 directions)
+**What NOT to do (yet):** Incremental move/unmove (make/unmake without Clone) would be the ultimate optimization but requires a major rewrite of Step's multi-phase rules resolution. Save for later if Pool-based Clone isn't enough.
+
+**After perf: re-test QS.** If Clone+Step cost drops significantly, wire existing `qsMax`/`qsMin` into BRS leaves and re-run `make compare`. The infrastructure is ready from Iter 13.
 
 **Files:**
 | File | Action |
 |------|--------|
-| `logic/sim.go` | Add `sync.Pool`, optimize Clone/Step allocations |
-| `logic/search.go` | Replace map allocations with arrays |
+| `logic/sim.go` | `sync.Pool`, array-based moves in `Step`, pre-sized internal slices |
+| `logic/search.go` | Replace map allocations with index arrays in `brsMin`, `brsMax` |
+| `logic/voronoi.go` | Pool or pre-size `owner`/`dist`/`blocked` arrays |
 
-**Verify:** `go test -bench . -benchmem ./logic/` before and after. `make compare` to confirm no regression.
+**Verify:**
+- `go test -bench BenchmarkClone -benchmem ./logic/` before and after
+- `make compare PREV=snapshots/haruko-<v13> N=100` — target: >55% win rate (extra depth should show)
 
 ---
 
-### Iteration 15 — Parameter Tuning Tournament
+### Iteration 15 — Search Pruning + Extensions (Free Depth)
 
 **Status:** TODO
 **Depends on:** Iteration 14
 
-**Goal:** Systematically tune evaluation weights for the BRS-based search.
+**Goal:** Get more effective search depth without adding nodes. Standard game-tree pruning techniques that are well-proven in chess engines and translate cleanly to BRS.
 
-**Why deferred:** Weights tuned for paranoid minimax at depth 6 won't be optimal for BRS at depth 12. Territory weight, h2h pressure, confinement bonuses — all need re-calibration for the deeper, less pessimistic search.
+**Why this replaces parameter tuning:** Iter 10-13 showed that depth gains (65%, 59%) massively outperform tuning-class changes (54%, ~50%). Pruning techniques give "free" depth — same or fewer nodes, but deeper in the lines that matter.
 
-**Approach:**
-- Create a parameter config struct with all eval weights
-- Run round-robin tournaments: current best vs variations (±20% on each weight)
-- Hill-climbing: keep the winner, vary again
-- Use `make bench` infrastructure with different configs loaded via env vars or flags
-- Target: 500+ games per config pair for statistical significance
+**Techniques (implement in this order, test each independently):**
+
+1. **Late Move Reduction (LMR):** In `brsMax`, if move index ≥ 2 (3rd and 4th moves tried) and the position is not volatile (`isQuiet` returns true), search at `depth-2` instead of `depth-1`. If the reduced search returns a score > alpha, re-search at full depth. Net effect: ~30-40% fewer nodes in quiet positions, translating to +1-2 plies effective depth.
+
+2. **Null Move Pruning (NMP):** In `brsMax`, before trying any move, skip our turn (let opponent move twice). If the resulting score is still >= beta (we're so far ahead that even passing is fine), prune this branch. Typically saves the most in positions with large territory advantage. Use reduction R=2 (search at depth-R-1). Skip when in check equivalent (`!isQuiet` or `safeMoveCount(me) <= 1`).
+
+3. **Volatile position extensions:** In `brsMax`/`brsMin`, when `!isQuiet()`, extend depth by +1 ply (increment depth instead of decrementing). This is the lightweight QS alternative identified in Iter 13 — uses the existing search tree (with TT, killers) rather than a separate QS tree. Cap extensions at +2 total per branch to prevent explosion.
+
+**Files:**
+| File | Action |
+|------|--------|
+| `logic/search.go` | Add LMR in `brsMax`, NMP in `brsMax`, extension logic in `brsMax`/`brsMin` |
+| `logic/search_test.go` | Test that LMR/NMP don't break correctness, extension depth cap works |
+
+**Verify:** Test each technique independently with `make compare N=100`. They may compound or conflict — if one hurts, drop it and keep the others.
+
+**Risk:** NMP can be dangerous if the eval is inaccurate (passing when you shouldn't). If NMP alone shows < 50%, remove it and keep LMR + extensions.
 
 ---
 
-### Iteration 16 — Endgame Detection (Stretch)
+### Iteration 16 — Endgame Detection
 
-**Status:** TODO (stretch)
-**Depends on:** Iteration 12
+**Status:** TODO
+**Depends on:** Iteration 14
 
-**Goal:** When the board is partitioned (Voronoi territories don't overlap), switch from combat mode to space-filling mode.
+**Goal:** When the board is partitioned (snakes can't reach each other), switch from BRS combat search to space-filling mode.
 
-**Why:** In late-game positions where snakes are separated by bodies/walls, the search wastes time modeling an opponent who can't interact with us. Detecting this and switching to a space-filling strategy would dramatically improve endgame survival.
+**Why promoted from stretch:** In long games (~200+ turns), the board frequently partitions. The BRS search wastes the entire 300ms budget modeling an opponent who can't interact with us. Detecting this and switching strategy should noticeably improve endgame survival rate, which directly impacts self-play turn count.
 
 **Approach:**
-- After Voronoi BFS, check if any cell is reachable by both snakes. If not → endgame (board partitioned).
-- In endgame: greedily maximize reachable space (modified flood fill), prioritize eating food to extend health.
-- Skip minimax entirely — just pick the move that maximizes flood-fill count.
-- Consider Hamiltonian-path heuristics for space-filling efficiency.
+
+1. **Partition detection:** After `VoronoiTerritory` BFS, check if the territory sets overlap. If every cell is claimed by exactly one snake (no ties in the frontier), the board is partitioned. This is a byproduct of the existing BFS — just check if any cell was tied at the boundary. Near-zero additional cost.
+
+2. **Space-filling strategy:** When partitioned:
+   - Skip BRS entirely (saves 300ms of wasted search)
+   - Pick the move that maximizes flood-fill reachable cells in our partition
+   - Tiebreak: prefer moves toward food (extend health to outlast opponent)
+   - Consider simple longest-path heuristic: prefer moves that don't cut off future options (avoid creating dead-end pockets in our territory)
+
+3. **Gradual transition (optional refinement):** If partition is "almost" complete (1-2 contested cells), reduce BRS budget and blend with space-filling score.
+
+**Files:**
+| File | Action |
+|------|--------|
+| `logic/voronoi.go` | Add `IsPartitioned(g, myID) bool` using existing BFS data |
+| `logic/eval.go` or `logic/endgame.go` | Space-filling move selection |
+| `logic/search.go` | Check partition before BRS, short-circuit if partitioned |
+
+**Verify:** `make compare N=100` — look for longer average turns (better endgame survival) and win rate improvement.
+
+---
+
+### Iteration 17 — Parameter Tuning (Simplified)
+
+**Status:** TODO
+**Depends on:** Iteration 15
+
+**Goal:** Re-calibrate eval weights for the current search (BRS + pruning). The weights (wLen=2.0, wH2H=5.0, confinement 50/15, food urgency scaling) were hand-tuned in Iter 8 for paranoid minimax at depth 3. BRS at depth 14+ with pruning may favor different weight ratios.
+
+**Why simplified (no tournament infrastructure):** Building a full tournament runner with env vars, configs, and hill-climbing is over-engineered for 5 weights. Just run targeted `make compare` experiments.
+
+**Approach:**
+- One weight at a time: double it, halve it, compare N=100 against current best
+- Start with the highest-leverage weights: territory (implicit 1.0), confinement (50/15), h2h (5.0)
+- If a change wins >55%, keep it. If <50%, revert. If 50-55%, it's noise — skip.
+- Total: ~10-15 compare runs, ~30 minutes of compute
+
+**Files:**
+| File | Action |
+|------|--------|
+| `logic/eval.go` | Adjust weights based on results |
+
+---
+
+### Iteration 18 — QS Retry (Conditional)
+
+**Status:** TODO (conditional on Iter 14 results)
+**Depends on:** Iteration 14
+
+**Goal:** Re-test quiescence search with cheaper per-node cost.
+
+**Precondition:** Iter 14 must reduce Clone+Step cost by at least 2× (measured via benchmarks). If it doesn't, skip this iteration entirely.
+
+**Approach:** Wire existing `qsMax`/`qsMin` from Iter 13 into BRS leaf nodes. Start with qsMaxDepth=1, tight triggers (dist≤1, safeMoves==0). Compare vs pre-QS baseline.
+
+**If still ≤50%:** QS is not viable for Battlesnake at 300ms budget. Close this line of investigation permanently and note in Findings. The volatile-position extensions from Iter 15 are the replacement.
 
 ---
 
@@ -655,9 +723,11 @@ Track all snapshots here for easy reference in `make compare` commands.
 | 11 | `snapshots/haruko-0bf91d3` | ~197 (self-play), 65% vs v10 | Transposition table + Zobrist hashing, maxDepth 5→6 |
 | 12 | `snapshots/haruko-cee3f49` | ~213 (self-play), 59% vs v11 | Best-Reply Search (algorithm change) |
 | 13 | — | ~200 (self-play), ~50% vs v12 | Eval N-opponent generalization + QS infra (not wired — too expensive) |
-| 14 | | | Performance optimization |
-| 15 | | | Parameter tuning tournament |
-| 16 | | | Endgame detection (stretch) |
+| 14 | | | Performance optimization (alloc reduction, map→array) |
+| 15 | | | Search pruning + extensions (LMR, NMP, volatile extensions) |
+| 16 | | | Endgame detection (partition → space-filling) |
+| 17 | | | Parameter tuning (simplified, no tournament infra) |
+| 18 | | | QS retry (conditional on Iter 14 perf gains) |
 
 ---
 
@@ -698,6 +768,21 @@ Quiescence search (extending search in volatile positions at leaf nodes) was tes
 - **Lighter alternative to try:** Use `isQuiet` for BRS depth *extensions* (+1 ply in volatile positions, no separate QS tree). This avoids the separate qsMax/qsMin overhead while still addressing the horizon effect.
 - **Infrastructure kept:** `isQuiet`, `forcingMoves`, `safeMoveCount`, `qsMax`, `qsMin` all exist in search.go with tests. Ready to wire in after perf optimization.
 
+### Depth Is King, But Only If Nodes Are Cheap (Iter 10-13)
+The last 4 iterations revealed a clear pattern: **more effective depth = more wins**, but the method matters.
+
+| Iter | Type | Win rate | Effective depth impact |
+|------|------|----------|----------------------|
+| 10 | Move ordering (prune faster) | 54% | ~same depth, fewer nodes |
+| 11 | TT + raise cap (extra ply) | 65% | **+1 ply** |
+| 12 | BRS (algorithm change) | 59% | **+8 plies** (4/ply vs 16/round) |
+| 13 | QS (extra nodes at leaf) | ≤51% | -1 to -2 plies (overhead) |
+
+- **Changes that add depth win big** (Iter 11, 12). The search sees further and finds better moves.
+- **Changes that reduce node count for same depth win modestly** (Iter 10). With branching factor 4, there's limited room for pruning gains.
+- **Changes that add nodes at current cost lose** (Iter 13). Each Clone+Step+Evaluate costs the same regardless of depth, so adding QS nodes steals from main search.
+- **Implication:** The path forward is either (1) make nodes cheaper (Iter 14 perf), or (2) get free depth via pruning — search fewer nodes but deeper in the important lines (Iter 15 LMR/NMP/extensions).
+
 ### Eval > Search Depth (Iter 5-7)
 Deeper search with a bad eval is counterproductive. v6 (depth 3, space-only eval) lost to v2 (flood-fill heuristic). Only after Voronoi territory eval (v7) did deeper search add value. Always fix the eval before optimizing search.
 
@@ -713,8 +798,8 @@ server.go               ← HTTP server
 logic/
   types.go              ← Coord, Snake, Direction, AllDirections, Coord.Move  [Iter 1, cleanup]
   sim.go                ← GameSim (Clone, Step, full rules)                   [Iter 3-4]
-  search.go             ← BRS + paranoid minimax, alpha-beta, iterative deepening [Iter 5-6, 9-12]
-  eval.go               ← Evaluation function (Voronoi + food urgency)        [Iter 5, 7-8]
+  search.go             ← BRS + paranoid minimax, alpha-beta, ID, QS infra     [Iter 5-6, 9-13]
+  eval.go               ← N-opponent eval (Voronoi + composite) + safeMoveCount [Iter 5, 7-8, 13]
   voronoi.go            ← Multi-source BFS territory counting                 [Iter 7]
   zobrist.go            ← Zobrist hashing (snake bodies + food)                [Iter 11]
   tt.go                 ← Transposition table (probe/store/generation)        [Iter 11]

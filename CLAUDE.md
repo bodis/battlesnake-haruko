@@ -40,7 +40,7 @@ Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 
 
 **Note:** Paranoid minimax (retained in `BestMove`) degrades at depth 7+. BRS in `BestMoveIterative` breaks this ceiling.
 
-**Next:** Iter 14 — perf optimization. Then parameter tuning (Iter 15).
+**Next:** Iter 14 — perf optimization (alloc reduction). Then search pruning/extensions (Iter 15), endgame detection (Iter 16), parameter tuning (Iter 17).
 
 ## Failed experiments (do NOT retry without new preconditions)
 
