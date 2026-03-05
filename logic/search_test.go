@@ -319,6 +319,92 @@ func TestBestMoveIterative_PVOrdering(t *testing.T) {
 	}
 }
 
+// --- BRS Tests ---
+
+// TestBRS_DeadEndAvoidance: same pocket scenario, verify BRS avoids dead-end.
+func TestBRS_DeadEndAvoidance(t *testing.T) {
+	me := makeSnake("me", []Coord{{2, 2}, {2, 1}})
+	opp := makeSnake("opp", []Coord{
+		{4, 2}, {4, 1}, {4, 0}, {3, 0}, {3, 1}, {3, 2}, {3, 3}, {3, 4}, {4, 4}, {4, 3},
+	})
+	g := NewGameSim(5, 5, []SimSnake{me, opp}, nil, nil)
+
+	dir := g.BestMoveIterative("me", 300*time.Millisecond)
+	if dir == Right {
+		t.Errorf("BRS picked Right (dead-end pocket), expected Up or Left")
+	}
+}
+
+// TestBRS_HeadToHeadKill: verify BRS finds the kill when longer.
+func TestBRS_HeadToHeadKill(t *testing.T) {
+	me := makeSnake("me", []Coord{{5, 5}, {5, 4}, {5, 3}, {5, 2}}) // length 4
+	opp := makeSnake("opp", []Coord{{5, 7}, {5, 8}})                // length 2
+	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
+
+	dir := g.BestMoveIterative("me", 300*time.Millisecond)
+	if dir != Up {
+		t.Errorf("BRS expected Up (head-to-head kill), got %v", DirectionName(dir))
+	}
+}
+
+// TestBRS_NoOpponent: solo snake, verify oppID=="" path works.
+func TestBRS_NoOpponent(t *testing.T) {
+	me := makeSnake("me", []Coord{{5, 5}, {5, 4}, {5, 3}})
+	g := NewGameSim(11, 11, []SimSnake{me}, nil, nil)
+
+	dir := g.BestMoveIterative("me", 200*time.Millisecond)
+	valid := dir == Up || dir == Down || dir == Left || dir == Right
+	if !valid {
+		t.Errorf("BRS no-opponent returned invalid direction %v", dir)
+	}
+}
+
+// TestBRS_TinyBudget: 1ms budget, valid move returned.
+func TestBRS_TinyBudget(t *testing.T) {
+	me := makeSnake("me", []Coord{{5, 5}, {5, 4}, {5, 3}})
+	opp := makeSnake("opp", []Coord{{3, 5}, {3, 6}, {3, 7}})
+	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
+
+	dir := g.BestMoveIterative("me", 1*time.Millisecond)
+	valid := dir == Up || dir == Down || dir == Left || dir == Right
+	if !valid {
+		t.Errorf("BRS tiny budget returned invalid direction %v", dir)
+	}
+}
+
+// TestBRS_DepthComparison: valid moves at depths 1 through 8 via iterative deepening.
+func TestBRS_DepthComparison(t *testing.T) {
+	me := makeSnake("me", []Coord{{5, 5}, {5, 4}, {5, 3}})
+	opp := makeSnake("opp", []Coord{{3, 5}, {3, 6}, {3, 7}})
+	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
+
+	for _, budget := range []time.Duration{
+		5 * time.Millisecond,
+		50 * time.Millisecond,
+		200 * time.Millisecond,
+		500 * time.Millisecond,
+	} {
+		dir := g.BestMoveIterative("me", budget)
+		valid := dir == Up || dir == Down || dir == Left || dir == Right
+		if !valid {
+			t.Errorf("BRS budget=%v returned invalid direction %v", budget, dir)
+		}
+	}
+}
+
+// TestBRS_ReturnsValidMove: standard 11x11 board, generous budget.
+func TestBRS_ReturnsValidMove(t *testing.T) {
+	me := makeSnake("me", []Coord{{5, 5}, {5, 4}, {5, 3}})
+	opp := makeSnake("opp", []Coord{{3, 5}, {3, 6}, {3, 7}})
+	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
+
+	dir := g.BestMoveIterative("me", 500*time.Millisecond)
+	valid := dir == Up || dir == Down || dir == Left || dir == Right
+	if !valid {
+		t.Errorf("BRS returned invalid direction %v", dir)
+	}
+}
+
 // TestEvaluate_MeDead: returns -1000 when our snake is eliminated.
 func TestEvaluate_MeDead(t *testing.T) {
 	me := SimSnake{ID: "me", Body: []Coord{{0, 0}}, Health: 0, Length: 1, EliminatedCause: "starvation"}

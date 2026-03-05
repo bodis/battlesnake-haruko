@@ -26,8 +26,8 @@ API types (`Coord`, `Battlesnake` in `models.go`) are converted to `logic.Coord`
 - `:8080` — current snake (all normal targets)
 - `:8081` — previous snapshot (`make compare`)
 
-## Current state (Iter 11)
-Iterative deepening with 300ms time budget, max depth 6. Transposition table (Zobrist hashing, 1M entries, generation-based invalidation) shared across iterative deepening depths — ~25% hit rate at depth 6, enabling 1 extra ply vs Iter 10. PV move ordering from TT + killer heuristic. Composite evaluation: Voronoi territory (dominant), length advantage, head-to-head pressure, opponent confinement, and food urgency. 65% vs Iter 10 (N=100).
+## Current state (Iter 12)
+Best-Reply Search (BRS) replaces paranoid minimax in `BestMoveIterative`. BRS alternates max/min plies (branching 4 per ply instead of 16 per round), enabling depth 14 ply cap (~7 full rounds). TT probed/stored only in max nodes. Iterative deepening with 300ms budget. Composite evaluation unchanged. 59% vs Iter 11 (N=100).
 
 ## Bench / version comparison
 - `make bench [N=10]` — self-play; turns are the meaningful metric (A/B split is noise)
@@ -35,12 +35,12 @@ Iterative deepening with 300ms time budget, max depth 6. Transposition table (Zo
 - `-save FILE` flag writes JSONL: `{"n":1,"winner":"A","turns":42,"seed":123}` — seed replays exact game with `--seed`
 - Speed: ~100 games in 4s with 16 workers; all local, no network overhead
 
-Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 ~417, v11 ~197.
+Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 ~417, v11 ~197, v12 ~213.
 `make bench` manages the server lifecycle automatically; `go run ./cmd/bench` requires a server already running on the target port.
 
-**Note:** Paranoid minimax degrades at depth 7+ (assumes perfect opponent coordination, becomes overly pessimistic). Max depth 6 is the sweet spot.
+**Note:** Paranoid minimax (retained in `BestMove`) degrades at depth 7+. BRS in `BestMoveIterative` breaks this ceiling.
 
-**Next:** Iter 12 — Best-Reply Search (replace paranoid minimax to break depth 6 ceiling, target depth 10-12). Then quiescence search (Iter 13), perf optimization (Iter 14), parameter tuning (Iter 15).
+**Next:** Iter 13 — Quiescence search + eval hardening. Then perf optimization (Iter 14), parameter tuning (Iter 15).
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 is available at `/Users/bodist/go/bin/gopls`. Use it when appropriate:

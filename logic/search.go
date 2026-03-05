@@ -5,23 +5,26 @@ import (
 	"time"
 )
 
-const maxDepth = 6
+const (
+	maxDepth    = 6  // paranoid minimax (retained for BestMove)
+	brsMaxDepth = 14 // BRS ply depth cap
+)
 
 // killerTable stores up to 2 killer moves per depth level.
-type killerTable [maxDepth + 1][2]Direction
+type killerTable [brsMaxDepth + 1][2]Direction
 
 // searchContext carries a deadline, killer move table, and transposition table.
 type searchContext struct {
 	deadline   time.Time
 	timedOut   bool
 	killers    killerTable
-	hasKillers [maxDepth + 1][2]bool
+	hasKillers [brsMaxDepth + 1][2]bool
 	tt         *TranspositionTable
 }
 
 // storeKiller records a move that caused a beta cutoff at the given depth.
 func (ctx *searchContext) storeKiller(depth int, d Direction) {
-	if depth > maxDepth {
+	if depth > brsMaxDepth {
 		return
 	}
 	// Don't store duplicates.
@@ -91,15 +94,16 @@ func (g *GameSim) BestMove(myID string, depth int) Direction {
 	return bestDir
 }
 
-// BestMoveIterative runs iterative deepening with a time budget.
-// It searches depth 1, 2, 3, ... and returns the best move from the deepest
-// completed search. Always has a valid move ready from at least depth 1.
+// BestMoveIterative runs iterative deepening with BRS (Best-Reply Search).
+// BRS alternates max (our) and min (opponent) plies instead of simultaneous moves,
+// reducing pessimism and enabling deeper search than paranoid minimax.
 func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction {
-	var oppIDs []string
+	var oppID string
 	for i := range g.Snakes {
 		s := &g.Snakes[i]
 		if s.ID != myID && s.IsAlive() {
-			oppIDs = append(oppIDs, s.ID)
+			oppID = s.ID
+			break
 		}
 	}
 
@@ -110,8 +114,7 @@ func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction
 	pvMove := Down
 	hasPV := false
 
-	for depth := 1; depth <= maxDepth; depth++ {
-		// Before starting depth > 1, check if enough budget remains.
+	for depth := 1; depth <= brsMaxDepth; depth++ {
 		if depth > 1 {
 			remaining := time.Until(deadline)
 			if remaining < budget*3/10 {
@@ -123,9 +126,9 @@ func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction
 		depthBest := Down
 		depthBestScore := math.Inf(-1)
 
-		rootMoves := orderedMoves(pvMove, hasPV, [2]Direction{}, [2]bool{})
+		rootMoves := orderedMoves(pvMove, hasPV, ctx.killers[depth], ctx.hasKillers[depth])
 		for _, myDir := range rootMoves {
-			score := minimaxMin(g, depth, math.Inf(-1), math.Inf(1), myDir, myID, oppIDs, ctx)
+			score := brsMin(g, depth-1, math.Inf(-1), math.Inf(1), myDir, myID, oppID, ctx)
 			if ctx.timedOut {
 				break
 			}
@@ -144,6 +147,125 @@ func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction
 	}
 
 	return bestDir
+}
+
+// brsMax is the maximizing ply (our move) in Best-Reply Search.
+func brsMax(g *GameSim, depth int, alpha, beta float64, myID, oppID string, ctx *searchContext) float64 {
+	if time.Now().After(ctx.deadline) {
+		ctx.timedOut = true
+		return 0
+	}
+
+	if depth <= 0 || g.IsOver() {
+		return Evaluate(g, myID)
+	}
+
+	alpha0 := alpha
+	var hash uint64
+	var ttMove Direction
+	hasTTMove := false
+
+	if ctx.tt != nil {
+		hash = g.Hash()
+		score, move, hasMove, hit := ctx.tt.Probe(hash, depth, alpha, beta)
+		if hit {
+			return score
+		}
+		ttMove = move
+		hasTTMove = hasMove
+	}
+
+	bestScore := math.Inf(-1)
+	bestMove := Down
+
+	var moves [4]Direction
+	if depth <= brsMaxDepth {
+		moves = orderedMoves(ttMove, hasTTMove, ctx.killers[depth], ctx.hasKillers[depth])
+	} else {
+		moves = AllDirections
+	}
+
+	for _, myDir := range moves {
+		val := brsMin(g, depth-1, alpha, beta, myDir, myID, oppID, ctx)
+		if ctx.timedOut {
+			break
+		}
+		if val > bestScore {
+			bestScore = val
+			bestMove = myDir
+		}
+		if val > alpha {
+			alpha = val
+		}
+		if alpha >= beta {
+			ctx.storeKiller(depth, myDir)
+			break
+		}
+	}
+
+	if ctx.tt != nil && !ctx.timedOut {
+		ctx.tt.Store(hash, depth, bestScore, bestMove, alpha0, beta)
+	}
+
+	return bestScore
+}
+
+// brsMin is the minimizing ply (opponent's response) in Best-Reply Search.
+// myDir is our pending move; this function picks the opponent's best reply,
+// then applies both moves via Clone+Step.
+func brsMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myID, oppID string, ctx *searchContext) float64 {
+	if time.Now().After(ctx.deadline) {
+		ctx.timedOut = true
+		return 0
+	}
+
+	// No opponent — just simulate our move alone.
+	if oppID == "" {
+		sim := g.Clone()
+		sim.Step(map[string]Direction{myID: myDir})
+		if depth <= 0 || sim.IsOver() {
+			return Evaluate(sim, myID)
+		}
+		return brsMax(sim, depth, alpha, beta, myID, oppID, ctx)
+	}
+
+	worstScore := math.Inf(1)
+
+	var moves [4]Direction
+	if depth <= brsMaxDepth {
+		moves = orderedMoves(Down, false, ctx.killers[depth], ctx.hasKillers[depth])
+	} else {
+		moves = AllDirections
+	}
+
+	for _, oppDir := range moves {
+		sim := g.Clone()
+		sim.Step(map[string]Direction{myID: myDir, oppID: oppDir})
+
+		var val float64
+		if depth <= 0 || sim.IsOver() {
+			val = Evaluate(sim, myID)
+		} else {
+			val = brsMax(sim, depth-1, alpha, beta, myID, oppID, ctx)
+		}
+
+		if ctx.timedOut {
+			break
+		}
+
+		if val < worstScore {
+			worstScore = val
+		}
+		if val < beta {
+			beta = val
+		}
+		if beta <= alpha {
+			ctx.storeKiller(depth, oppDir)
+			break
+		}
+	}
+
+	return worstScore
 }
 
 // minimaxMin is the minimizing layer: enumerates all opponent move combos,
