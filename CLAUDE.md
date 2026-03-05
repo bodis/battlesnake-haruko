@@ -27,7 +27,7 @@ API types (`Coord`, `Battlesnake` in `models.go`) are converted to `logic.Coord`
 - `:8080` — current snake (all normal targets)
 - `:8081` — previous snapshot (`make compare`)
 
-## Current state (Iter 14)
+## Current state (Iter 14, unchanged after Iter 15 experiments)
 Perf optimization: zero-alloc hot path. `MoveSet` replaces `map[string]Direction`, index-based search/eval/voronoi (no `SnakeByID` in hot path), `sync.Pool` for `GameSim` clones (4.4x faster, 0 allocs), pooled Voronoi workspace, stack-allocated arrays in `Step`. BRS node cost: ~1.1µs/0 allocs. 56% vs Iter 12 (N=100).
 
 ## Bench / version comparison
@@ -41,7 +41,7 @@ Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 
 
 **Note:** Paranoid minimax (retained in `BestMove`) degrades at depth 7+. BRS in `BestMoveIterative` breaks this ceiling.
 
-**Next:** Iter 15 — search pruning/extensions (LMR, null move pruning, volatile position extensions). Then endgame detection (Iter 16), parameter tuning (Iter 17), QS retry (Iter 18 — precondition met: Clone+Step now ~4x cheaper).
+**Next:** Endgame detection (Iter 16), parameter tuning (Iter 17), QS retry (Iter 18 — precondition met: Clone+Step now ~4x cheaper).
 
 ## Failed experiments (do NOT retry without new preconditions)
 
@@ -63,7 +63,27 @@ Tried wiring `qsMax`/`qsMin` into `brsMax`/`brsMin` depth-0 returns. Tested mult
 2. Or: QS must avoid Clone+Step entirely (incremental move/unmove on the same GameSim)
 3. Or: Budget must increase well beyond 300ms (different game mode / hardware)
 
-**What to keep:** The `isQuiet`, `forcingMoves`, `safeMoveCount` helpers are useful independent of QS — `safeMoveCount` is already used by `Evaluate()`. Consider using `isQuiet` for search extensions (extend BRS depth by 1 in volatile positions) as a lighter alternative to full QS.
+**What to keep:** The `isQuiet`, `forcingMoves`, `safeMoveCount` helpers are useful independent of QS — `safeMoveCount` is already used by `Evaluate()`.
+
+### Search pruning/extensions — LMR, NMP, volatile extensions (Iter 15)
+Tried three standard chess search techniques in BRS. Tested every combination (N=100 each vs Iter 14):
+
+| Config | Win rate vs Iter 14 |
+|--------|-------------------|
+| All three (LMR + NMP + extensions) | ~48.5% (52%, 45%) |
+| Extensions only | 42% |
+| LMR only (index≥2) | 50% |
+| LMR only (index≥3, less aggressive) | 47% |
+| NMP only | 47% |
+| LMR + NMP | 39% |
+
+**Root cause — low branching factor:** BRS has only 4×4=16 nodes per full ply pair. Alpha-beta with TT+killers already prunes this efficiently. These techniques are designed for high-BF games (chess ~35, go ~250) where most moves are bad and you must prune aggressively to reach any depth. In BRS:
+- **LMR:** With only 4 moves, reducing moves 2-3 means reducing 50% of all moves. They aren't "bad" — just not the predicted best. Information loss outweighs the tiny depth savings.
+- **NMP:** "Skip our move" = play `Down` which may hit a wall/opponent. This isn't a true null move — it's a bad move. The concept of tempo doesn't translate to Battlesnake where every move is existential.
+- **Extensions:** Extra ply in volatile positions costs 16+ nodes, stealing time from iterative deepening. Losing one full depth iteration everywhere is worse than gaining 1 ply in one branch.
+- **LMR+NMP interact badly (39%):** NMP prunes based on reduced-depth LMR scores, compounding errors.
+
+**Key insight: do NOT apply chess search pruning techniques to BRS.** The low branching factor means the search tree is already narrow. Future search improvements should focus on better evaluation or game-specific heuristics rather than generic tree pruning.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 is available at `/Users/bodist/go/bin/gopls`. Use it when appropriate:
