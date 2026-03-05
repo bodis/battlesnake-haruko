@@ -41,9 +41,9 @@ Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 
 
 **Note:** Paranoid minimax (retained in `BestMove`) degrades at depth 7+. BRS in `BestMoveIterative` breaks this ceiling.
 
-**Next:** Move ordering improvement (Iter 18).
+**Next:** TBD — see roadmap rationale.
 
-**Roadmap rationale:** Every past win came from deeper search or better evaluation. Generic search pruning doesn't work at BRS's low BF. Phase-gated eval (Iter 17) proved that adaptive weights beat constant weights — the lever is eval quality, not search depth.
+**Roadmap rationale:** Every past win came from deeper search or better evaluation. Generic search pruning doesn't work at BRS's low BF (4×4=16). Phase-gated eval (Iter 17) proved adaptive weights beat constant weights. Move ordering (Iter 18) also failed — the lever is eval quality, not search mechanics.
 
 ## Failed experiments (do NOT retry without new preconditions)
 
@@ -109,6 +109,21 @@ Enriched `VoronoiTerritory` to return `VoronoiResult` with food ownership and pa
 - **Mid game** (current): territory-dominant eval already strong.
 - **Late game / partitioned** (`vr.IsPartitioned`): space-filling efficiency — maximize territory utilization, seek food only for survival.
 - Phase transitions should be gradual (linear interpolation) not abrupt thresholds.
+
+### Heuristic move ordering (Iter 18)
+Tried adding `isSafeDir`-based move ordering to BRS via `heuristicOrderedMoves`. Tested multiple configurations (all vs Iter 17):
+
+| Config | Win rate vs Iter 17 |
+|--------|-------------------|
+| All 3 sites (root + brsMax + brsMin), safety+center proximity | 47.5% (N=200) |
+| All 3 sites, safety only (no center proximity) | 47.0% (N=200) |
+| brsMin only, safety ordering | 51.5% (N=200) |
+
+**Root cause — low branching factor:** With only 4 moves per snake, TT+killer heuristics already order the 1-2 best moves correctly. The remaining 2-3 moves have minimal impact on alpha-beta cutoffs. The `isSafeDir` check adds per-node overhead (~8ns) across millions of nodes, and the center proximity tiebreaker actively misleads by biasing toward center when territory analysis prefers other directions. Even applying ordering to brsMin only (highest-value target, no TT move) produced neutral results.
+
+**Key insight: move ordering optimization is exhausted at BRS's low BF.** TT+killers are sufficient for 4-move branching. Future improvements should focus on eval quality, not search mechanics.
+
+**Infrastructure kept:** `isSafeDir(g, s, d)` helper extracted from `safeMoveCount` — useful for eval and future work.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 is available at `/Users/bodist/go/bin/gopls`. Use it when appropriate:

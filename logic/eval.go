@@ -1,32 +1,32 @@
 package logic
 
+// isSafeDir returns true if moving snake s in direction d doesn't immediately
+// hit a wall or any alive snake's body segment (segments 1..len-1).
+func isSafeDir(g *GameSim, s *SimSnake, d Direction) bool {
+	next := s.Head().Move(d)
+	if next.X < 0 || next.X >= g.Width || next.Y < 0 || next.Y >= g.Height {
+		return false
+	}
+	for j := range g.Snakes {
+		s2 := &g.Snakes[j]
+		if !s2.IsAlive() {
+			continue
+		}
+		for seg := 1; seg < len(s2.Body); seg++ {
+			if next == s2.Body[seg] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // safeMoveCount returns the number of directions from s's head that don't
 // immediately hit a wall or any alive snake's body (segments 1..len-1).
 func safeMoveCount(g *GameSim, s *SimSnake) int {
 	count := 0
-	head := s.Head()
 	for _, d := range AllDirections {
-		next := head.Move(d)
-		if next.X < 0 || next.X >= g.Width || next.Y < 0 || next.Y >= g.Height {
-			continue
-		}
-		hit := false
-		for j := range g.Snakes {
-			s2 := &g.Snakes[j]
-			if !s2.IsAlive() {
-				continue
-			}
-			for seg := 1; seg < len(s2.Body); seg++ {
-				if next == s2.Body[seg] {
-					hit = true
-					break
-				}
-			}
-			if hit {
-				break
-			}
-		}
-		if !hit {
+		if isSafeDir(g, s, d) {
 			count++
 		}
 	}
