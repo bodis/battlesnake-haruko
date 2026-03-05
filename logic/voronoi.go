@@ -22,10 +22,19 @@ var voronoiPool = sync.Pool{
 	},
 }
 
+// VoronoiResult holds enriched territory data from multi-source BFS.
+type VoronoiResult struct {
+	MyTerritory   int
+	OppTerritory  int
+	MyFood        int  // food cells in our Voronoi territory
+	OppFood       int  // food cells in opponent territory
+	IsPartitioned bool // our wavefront never met any opponent wavefront
+}
+
 // VoronoiTerritory performs a multi-source BFS from all alive snake heads
-// and returns the number of cells claimed by myIdx and by all opponents combined.
+// and returns territory counts, food ownership, and partition status.
 // Cells reached by two snakes in the same BFS layer are unclaimed (ties).
-func VoronoiTerritory(g *GameSim, myIdx int) (myCount, oppCount int) {
+func VoronoiTerritory(g *GameSim, myIdx int) VoronoiResult {
 	size := g.Width * g.Height
 
 	ws := voronoiPool.Get().(*voronoiWorkspace)
@@ -40,11 +49,13 @@ func VoronoiTerritory(g *GameSim, myIdx int) (myCount, oppCount int) {
 	ws.queue = ws.queue[:0]
 
 	// blocked: interior body segments (index 1..len-2) of alive snakes.
+	aliveCount := 0
 	for i := range g.Snakes {
 		s := &g.Snakes[i]
 		if !s.IsAlive() {
 			continue
 		}
+		aliveCount++
 		end := len(s.Body) - 1 // tail index (passable)
 		for seg := 1; seg < end; seg++ {
 			c := s.Body[seg]
@@ -76,6 +87,9 @@ func VoronoiTerritory(g *GameSim, myIdx int) (myCount, oppCount int) {
 	}
 
 	// BFS expansion.
+	myTag := int8(myIdx + 1)
+	myHasFrontier := false
+
 	for qi := 0; qi < len(ws.queue); qi++ {
 		cur := ws.queue[qi]
 		ci := cur.y*g.Width + cur.x
@@ -102,24 +116,46 @@ func VoronoiTerritory(g *GameSim, myIdx int) (myCount, oppCount int) {
 				ws.owner[ni] = curOwner
 				ws.queue = append(ws.queue, voronoiEntry{next.X, next.Y})
 			} else if ws.dist[ni] == nd && ws.owner[ni] != curOwner && ws.owner[ni] != -1 {
+				if ws.owner[ni] == myTag || curOwner == myTag {
+					myHasFrontier = true
+				}
 				ws.owner[ni] = -1
 			}
 		}
 	}
 
 	// Count territory.
-	myTag := int8(myIdx + 1)
-
+	var result VoronoiResult
 	for i := 0; i < size; i++ {
 		o := ws.owner[i]
 		if o <= 0 {
 			continue
 		}
 		if o == myTag {
-			myCount++
+			result.MyTerritory++
 		} else {
-			oppCount++
+			result.OppTerritory++
 		}
 	}
-	return
+
+	// Count food ownership.
+	for _, f := range g.Food {
+		fi := f.Y*g.Width + f.X
+		if fi < 0 || fi >= size {
+			continue
+		}
+		switch ws.owner[fi] {
+		case myTag:
+			result.MyFood++
+		default:
+			if ws.owner[fi] > 0 {
+				result.OppFood++
+			}
+		}
+	}
+
+	// Partition: our wavefront never met any opponent.
+	result.IsPartitioned = !myHasFrontier && aliveCount >= 2
+
+	return result
 }

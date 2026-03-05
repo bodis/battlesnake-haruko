@@ -56,8 +56,8 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 	}
 
 	// Territory score (dominant factor).
-	myTerritory, oppTerritory := VoronoiTerritory(g, myIdx)
-	score := float64(myTerritory - oppTerritory)
+	vr := VoronoiTerritory(g, myIdx)
+	score := float64(vr.MyTerritory - vr.OppTerritory)
 
 	// Accumulate per-opponent scores.
 	myHead := me.Head()

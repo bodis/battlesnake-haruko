@@ -6,7 +6,7 @@ Battlesnake AI in Go. Module: `github.com/bodist/haruko`. Server port: 8080.
 - `main.go` — `info/start/end/move` handlers, `GameSession` map (mutex-protected with `sync.RWMutex`)
 - `logic/sim.go` — `GameSim`: full game state simulator with `Clone`, `CloneFromPool`/`Release`, `Step(MoveSet)`, `MoveSnakes(MoveSet)`, `IsOver`
 - `logic/eval.go` — `Evaluate(g, myIdx int)`: composite eval (Voronoi territory + length advantage + h2h pressure + opponent confinement + food urgency)
-- `logic/voronoi.go` — `VoronoiTerritory(g, myIdx int)`: multi-source BFS territory counting (workspace pooled)
+- `logic/voronoi.go` — `VoronoiResult` struct + `VoronoiTerritory(g, myIdx int) VoronoiResult`: multi-source BFS with territory, food ownership, partition detection (workspace pooled)
 - `logic/search.go` — `BestMoveIterative(myID, budget)`: iterative deepening with time management; index-based BRS + paranoid minimax; all hot-path cloning via sync.Pool
 - `logic/zobrist.go` — `GameSim.Hash()`: Zobrist hashing (snake bodies + food)
 - `logic/tt.go` — `TranspositionTable`: probe/store with generation-based invalidation
@@ -27,8 +27,8 @@ API types (`Coord`, `Battlesnake` in `models.go`) are converted to `logic.Coord`
 - `:8080` — current snake (all normal targets)
 - `:8081` — previous snapshot (`make compare`)
 
-## Current state (Iter 14, unchanged after Iter 15 experiments)
-Perf optimization: zero-alloc hot path. `MoveSet` replaces `map[string]Direction`, index-based search/eval/voronoi (no `SnakeByID` in hot path), `sync.Pool` for `GameSim` clones (4.4x faster, 0 allocs), pooled Voronoi workspace, stack-allocated arrays in `Step`. BRS node cost: ~1.1µs/0 allocs. 56% vs Iter 12 (N=100).
+## Current state (Iter 16 — VoronoiResult infrastructure)
+Rich Voronoi: `VoronoiResult` struct returns territory counts, food ownership (MyFood/OppFood), and partition detection (IsPartitioned) at zero extra cost (~1048ns/0 allocs). Eval uses territory only — food control and partition signals were tested but hurt or were neutral (see failed experiments). BRS node cost: ~1.1µs/0 allocs unchanged from Iter 14.
 
 ## Bench / version comparison
 - `make bench [N=10]` — self-play; turns are the meaningful metric (A/B split is noise)
@@ -41,9 +41,9 @@ Baselines (self-play avg turns): v1 ~68, v5 ~87, v6 ~328, v8 ~330, v9 ~306, v10 
 
 **Note:** Paranoid minimax (retained in `BestMove`) degrades at depth 7+. BRS in `BestMoveIterative` breaks this ceiling.
 
-**Next:** Endgame detection + space-filling (Iter 16), eval weight tuning (Iter 17), move ordering improvement (Iter 18).
+**Next:** Game-phase eval (Iter 17), move ordering improvement (Iter 18).
 
-**Roadmap rationale:** Every past win came from deeper search or better evaluation. Generic search-tree pruning (Iter 13, 15) doesn't transfer to BRS's low branching factor (4×4=16). Remaining gains are in game-specific eval heuristics (partition-aware endgame, tuned weights) and better move ordering (more alpha-beta cutoffs = effectively deeper search).
+**Roadmap rationale:** Every past win came from deeper search or better evaluation. Generic search pruning doesn't work at BRS's low BF. Constant-weight food signals are noise. The next lever is **game-phase-aware eval** — different weights for early/mid/late game — using VoronoiResult data (MyFood, IsPartitioned) shipped in Iter 16.
 
 ## Failed experiments (do NOT retry without new preconditions)
 
@@ -86,6 +86,29 @@ Tried three standard chess search techniques in BRS. Tested every combination (N
 - **LMR+NMP interact badly (39%):** NMP prunes based on reduced-depth LMR scores, compounding errors.
 
 **Key insight: do NOT apply chess search pruning techniques to BRS.** The low branching factor means the search tree is already narrow. Future search improvements should focus on better evaluation or game-specific heuristics rather than generic tree pruning.
+
+### Food control eval + partition short-circuit (Iter 16)
+Enriched `VoronoiTerritory` to return `VoronoiResult` with food ownership and partition detection. Tried using this data in eval and search:
+
+| Config | Win rate vs Iter 14 |
+|--------|-------------------|
+| Food control wt=3.0 + starving penalty (health<60) | 31% |
+| Food control wt=1.5 + starving penalty (health<30) | 28% |
+| Food control wt=1.0 (unconditional) | 51% (neutral) |
+| Health-gated food (health<50, wt=2.0) | 51% (neutral) |
+| Partition short-circuit (oppIdx=-1 at root) | 39% |
+
+**Root cause — no game phase awareness:** Food control was applied with constant weight across all game phases. Early game, food is critical (need to grow to win h2h fights); mid/late game, territory dominance matters more. A flat food weight either helps early and hurts late, or vice versa — net neutral or worse.
+
+**Root cause — transient partitions:** Body partitions open as tails retract. Setting `oppIdx=-1` at the root disables opponent modeling for the entire search, even at deeper nodes where the partition has opened. The snake then fails to prepare for re-engagement.
+
+**Infrastructure shipped:** `VoronoiResult` struct (MyFood, OppFood, IsPartitioned) computed at zero extra cost. This is the foundation for game-phase eval — see roadmap.
+
+**Future direction — game-phase eval (use VoronoiResult):**
+- **Early game** (Length < 7 or Turn < ~30): boost wLen and food urgency, use `vr.MyFood` to prefer food-rich territory. Growing faster wins h2h fights.
+- **Mid game** (current): territory-dominant eval already strong.
+- **Late game / partitioned** (`vr.IsPartitioned`): space-filling efficiency — maximize territory utilization, seek food only for survival.
+- Phase transitions should be gradual (linear interpolation) not abrupt thresholds.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 is available at `/Users/bodist/go/bin/gopls`. Use it when appropriate:

@@ -52,9 +52,11 @@ func BenchmarkEvaluate(b *testing.B) {
 func BenchmarkVoronoi(b *testing.B) {
 	g := standardBenchGame()
 	b.ResetTimer()
+	var vr VoronoiResult
 	for i := 0; i < b.N; i++ {
-		VoronoiTerritory(g, 0)
+		vr = VoronoiTerritory(g, 0)
 	}
+	_ = vr
 }
 
 func BenchmarkBRSNode(b *testing.B) {
