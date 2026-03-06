@@ -127,5 +127,8 @@ Root-level `oppIdx=-1` disables opponent modeling for entire search tree, but bo
 ### Heuristic move ordering (Iter 18): 47–51.5%
 isSafeDir-based ordering at BRS call sites. TT+killers already handle the 1-2 best moves; reordering the remaining 2-3 has negligible cutoff impact. Center proximity tiebreaker actively misleads.
 
+### Positional quality signals (Iter 21): 37–48%
+Edge/corner penalty, territory depth adequacy, center-of-mass advantage. All three individually harmful. Voronoi territory already captures positional quality implicitly — center positions get more territory, edge positions get less. Explicit positional signals double-count and confuse BRS. Depth adequacy (MyTerritoryDepth < snake length) is misleading because Voronoi partitions fluctuate turn-to-turn and depth < length is normal, not a crisis. Tried halving weights (48%), individual isolation (37–45%), normalized center (43%). All negative.
+
 ### Key principle
-Every past win came from deeper search or better eval. Search mechanics (pruning, ordering) are saturated at BF=4. The remaining lever is eval quality.
+Every past win came from deeper search or better eval. Search mechanics (pruning, ordering) are saturated at BF=4. The remaining lever is eval quality — but new signals must add genuinely new information, not restate what Voronoi territory already captures.

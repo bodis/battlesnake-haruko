@@ -10,9 +10,10 @@
 | Metric | Value |
 |--------|-------|
 | **Completed** | Iterations 1-20 (see ROADMAP_FINISHED.md) |
-| **Next** | Iteration 21 |
+| **Dead ends** | Iter 21 (positional quality — Voronoi already captures it) |
+| **Next** | Iteration 22 |
 | **Current** | v20 Food strategy signals; BRS depth 14; ~443 avg turns; Evaluate ~1130ns/0 allocs |
-| **Key insight** | Search mechanics exhausted at BF=4. The remaining lever is **eval quality** — specifically, strategic board understanding that goes beyond snapshot scoring. |
+| **Key insight** | Search mechanics exhausted at BF=4. The remaining lever is **eval quality** — but new signals must add genuinely new information, not restate what Voronoi territory already captures. |
 
 ---
 
@@ -26,54 +27,16 @@
 > These iterations extract strategic signals from existing data and teach the eval to reason about
 > the whole board, not just count cells.
 
-### Iteration 21 — Positional Quality
+### Iteration 21 — Positional Quality ❌ DEAD END
 
-**Status:** TODO
-**Depends on:** Iteration 19
-
-**Goal:** Not all positions are equal even with the same territory count. A central position with deep territory is strategically dominant. An edge position with thin corridors is vulnerable. Teach the eval to distinguish.
-
-**New signals:**
-
-1. **Edge/corner vulnerability**: Head position near board edges has fewer escape routes. This is a permanent positional disadvantage independent of territory count.
-   ```
-   edgeDist = min(head.X, head.Y, width-1-head.X, height-1-head.Y)
-   if edgeDist == 0: score -= wEdge * (1.0 - 0.5*earlyBlend)  // edges bad, less so early
-   if edgeDist == 0 for both axes (corner): score -= wCorner
-   ```
-   Mirror for opponent: opponent near edge/corner = bonus.
-
-2. **Territory depth adequacy**: `MyTerritoryDepth` (from Iter 19) tells us the longest path in our space. If it's shorter than our snake, we can't fit — death spiral. If it's much larger, we have room to maneuver.
-   ```
-   depthRatio = vr.MyTerritoryDepth / me.Length
-   if depthRatio < 1.0: score -= wDepthCrisis * (1.0 - depthRatio)  // can't fit
-   if depthRatio > 2.0: score += wDepthComfort * lateBlend          // plenty of room
-   ```
-
-3. **Center of mass advantage**: Territory centered near the board middle has more strategic flexibility than territory pushed to edges. Use centroids from Iter 19.
-   ```
-   boardCenter = (width-1)/2.0, (height-1)/2.0
-   myCenterDist = manhattan(myCenter, boardCenter)
-   oppCenterDist = manhattan(oppCenter, boardCenter)
-   score += wCenterControl * (oppCenterDist - myCenterDist)  // we're more central = good
-   ```
-
-**Phase interaction:** Edge vulnerability matters most in mid/late game (when confrontation likely). Territory depth matters most in late game. Center control is a constant mild signal.
-
-**Files:**
-| File | Action |
-|------|--------|
-| `logic/eval.go` | Add positional quality signals |
-| `logic/eval_test.go` | Test edge penalty, depth adequacy, center control |
-
-**Verify:** `make compare N=100` — target: >53%.
+All three signals (edge/corner penalty, territory depth adequacy, center-of-mass advantage) individually harmful (37–48%). Voronoi territory already captures positional quality implicitly. See ENGINE.md dead ends.
 
 ---
 
 ### Iteration 22 — Opponent Pressure & Aggression Mode
 
 **Status:** TODO
-**Depends on:** Iterations 20, 21
+**Depends on:** Iteration 20
 
 **Goal:** Adapt play style based on relative strength. When we're dominant (longer + better food access + more territory), play aggressively to close out the game. When we're weaker, play defensively to survive and find food.
 
@@ -193,7 +156,7 @@
 |----------|---------|
 | Existing | wTerritory coefficients, wLen, wH2H, confinement (50/15), tail chase (3.0), food urgency (0.5) |
 | Food strategy (Iter 20) | wFoodCluster, wFoodReach, wFoodDenial, wStarvationRisk |
-| Positional (Iter 21) | wEdge, wCorner, wDepthCrisis, wDepthComfort, wCenterControl |
+| Positional (Iter 21) | ❌ Dead end — no weights to tune |
 | Aggression (Iter 22) | dominance blend ratios, wHealthPressure, wPushToEdge, h2hRange scaling |
 | Late-game (Iter 23) | wSpaceCrisis, wPartitionStarve, wPartitionFood, wTailReachable, wOutlast |
 
@@ -245,7 +208,7 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 |-----------|----------|-----------|-------|
 | 19 | | | Voronoi strategic extraction (infra) |
 | 20 | `snapshots/haruko-a989fbb` | ~443 | Food strategy signals; 54% vs v19 |
-| 21 | | | Positional quality |
+| 21 | — | — | ❌ Dead end (37–48%) |
 | 22 | | | Opponent pressure & aggression mode |
 | 23 | | | Late-game survival intelligence |
 | 24 | | | Weight calibration |

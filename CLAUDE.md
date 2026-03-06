@@ -33,11 +33,11 @@ When finishing an iteration:
 - Hot path must be zero-alloc. Use `CloneFromPool`/`Release`, stack arrays, `sync.Pool`.
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 
-## Current state (Iter 20)
+## Current state (Iter 20, Iter 21 dead end)
 Food strategy signals: distance-weighted food value, reach advantage, denial/starvation, growth urgency. BRS depth up to 14. Voronoi: ~1025ns/0 allocs. Evaluate: ~1130ns/0 allocs. BRS node: ~1.2µs/0 allocs. Self-play avg ~443 turns.
 
 ## Direction
-Search mechanics are saturated (pruning, ordering, QS all failed — see ENGINE.md dead ends). The remaining lever is **eval quality**. Next improvements should add new eval signals or refine existing weights.
+Search mechanics are saturated (pruning, ordering, QS all failed — see ENGINE.md dead ends). The remaining lever is **eval quality** — but new signals must add genuinely new information, not restate what Voronoi territory already captures (Iter 21 dead end). Next: aggression mode, late-game survival, weight calibration.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.
