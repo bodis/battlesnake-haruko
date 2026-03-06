@@ -295,3 +295,71 @@ func TestEval_PhaseBlendContinuity(t *testing.T) {
 		prev = score
 	}
 }
+
+func TestEval_FoodClusterValue(t *testing.T) {
+	// Food at distance 1-2 in our territory should score higher than food at distance 8-9.
+	meBody := []Coord{{3, 3}, {3, 2}, {3, 1}}
+	oppBody := []Coord{{8, 8}, {8, 7}, {8, 6}}
+
+	gNear := twoSnakeGame(makeSnake("me", meBody), makeSnake("opp", oppBody))
+	gNear.Food = []Coord{{4, 3}, {3, 4}} // close food in our territory
+	gNear.Turn = 5
+
+	gFar := twoSnakeGame(makeSnake("me", meBody), makeSnake("opp", oppBody))
+	gFar.Food = []Coord{{6, 6}, {6, 7}} // far food, still in our territory (mid-board)
+	gFar.Turn = 5
+
+	scoreNear := Evaluate(gNear, 0)
+	scoreFar := Evaluate(gFar, 0)
+
+	if scoreNear <= scoreFar {
+		t.Errorf("close food should score higher than far food: near=%f far=%f", scoreNear, scoreFar)
+	}
+}
+
+func TestEval_FoodDenial(t *testing.T) {
+	// Opponent with 0 food in territory and low health should give us a bonus.
+	meBody := []Coord{{3, 3}, {3, 2}, {3, 1}}
+	oppBody := []Coord{{8, 8}, {8, 7}, {8, 6}}
+
+	// All food in our territory, opponent starving.
+	gDenial := twoSnakeGame(makeSnake("me", meBody), makeSnake("opp", oppBody))
+	gDenial.Snakes[1].Health = 20
+	gDenial.Food = []Coord{{2, 3}, {4, 3}}
+	gDenial.Turn = 30
+
+	// All food in opponent territory, opponent healthy.
+	gNoDenial := twoSnakeGame(makeSnake("me", meBody), makeSnake("opp", oppBody))
+	gNoDenial.Snakes[1].Health = 100
+	gNoDenial.Food = []Coord{{9, 8}, {7, 8}}
+	gNoDenial.Turn = 30
+
+	scoreDenial := Evaluate(gDenial, 0)
+	scoreNoDenial := Evaluate(gNoDenial, 0)
+
+	if scoreDenial <= scoreNoDenial {
+		t.Errorf("food denial should score higher: denial=%f noDenial=%f", scoreDenial, scoreNoDenial)
+	}
+}
+
+func TestEval_GrowthUrgency(t *testing.T) {
+	// Short snake on turn 50 (expected len ~8) should score lower than adequate-length snake.
+	oppBody := []Coord{{8, 8}, {8, 7}, {8, 6}}
+
+	// Undersized: length 4 at turn 50 (expected ~8).
+	shortMe := makeSnake("me", []Coord{{3, 3}, {3, 2}, {3, 1}, {3, 0}})
+	gShort := twoSnakeGame(shortMe, makeSnake("opp", oppBody))
+	gShort.Turn = 50
+
+	// Adequate: length 8 at turn 50.
+	longMe := makeSnake("me", []Coord{{3, 3}, {3, 2}, {3, 1}, {3, 0}, {4, 0}, {5, 0}, {6, 0}, {7, 0}})
+	gLong := twoSnakeGame(longMe, makeSnake("opp", oppBody))
+	gLong.Turn = 50
+
+	scoreShort := Evaluate(gShort, 0)
+	scoreLong := Evaluate(gLong, 0)
+
+	if scoreShort >= scoreLong {
+		t.Errorf("undersized snake should score lower: short=%f long=%f", scoreShort, scoreLong)
+	}
+}

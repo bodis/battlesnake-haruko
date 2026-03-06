@@ -291,6 +291,8 @@ Removed all dead code: FastBoard, FloodFill, NearestFoodDistance. Created `logic
 | 16 | — | — | VoronoiResult infrastructure |
 | 17 | — | ~451 | Phase-adaptive eval; 59% vs v16 |
 | 18 | — | — | Failed: heuristic move ordering |
+| 19 | — | — | Voronoi strategic extraction (infra) |
+| 20 | `snapshots/haruko-a989fbb` | ~443 | Food strategy signals; 54% vs v19 |
 
 ---
 
@@ -325,6 +327,9 @@ Food value changes across phases. Flat weights average early benefit and late ha
 ### Heuristic Move Ordering Negligible (Iter 18)
 TT+killers already handle the best 1-2 moves. Reordering remaining 2-3 has no measurable cutoff impact at BF=4.
 
+### Eval Signal Weights Are Sensitive (Iter 20)
+Initial food strategy weights (2.0/0.8/3.0/4.0/0.5) scored 47% — worse than baseline. Halving to (1.5/0.5/2.0/2.5/0.3) yielded 54%. Starvation risk is especially sensitive: overweighting causes over-cautious play that sacrifices territory for food proximity.
+
 ### Key Principle
 Every past win came from deeper search or better eval. Search mechanics (pruning, ordering) are saturated at BF=4. The remaining lever is **eval quality**.
 
@@ -352,3 +357,24 @@ Every past win came from deeper search or better eval. Search mechanics (pruning
 **Cost:** Voronoi ~1025ns (was ~1015ns). Zero new allocations. Evaluate and BRS node unchanged.
 
 **Result:** Infrastructure only — no behavioral change. Eval doesn't consume new fields until Iter 20.
+
+### Iteration 20 — Food Strategy Signals
+
+**Status:** DONE
+**Depends on:** Iteration 19
+
+**Goal:** Teach the eval to reason about food access quality, not just food count.
+
+**What was built:**
+- **Food cluster value**: Replaced flat `vr.MyFood` count with distance-weighted `vr.MyFoodValue` (sum of 1/dist). Weight 1.5 × earlyBlend.
+- **Food reach advantage**: Reward having closer food access than opponent. Weight 0.5. Always-on.
+- **Food denial**: Bonus when opponent has 0 food in territory and health < 40. Weight 2.0.
+- **Starvation risk**: Penalty when we have 0 food in territory and health < 50. Weight 2.5.
+- **Growth urgency**: Early-game penalty when snake length < expected for game turn. Weight 0.3 × earlyBlend.
+- 3 new tests: FoodClusterValue, FoodDenial, GrowthUrgency
+
+**Weight tuning:** Initial weights (2.0/0.8/3.0/4.0/0.5) scored 47% — too aggressive. Reduced to (1.5/0.5/2.0/2.5/0.3) for 54%.
+
+**Cost:** Evaluate ~1130ns (was ~1090ns). Zero new allocations.
+
+**Result:** 54% vs v19. ~443 avg turns.

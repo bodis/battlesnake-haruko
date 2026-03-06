@@ -51,7 +51,11 @@ HTTP request (GameState JSON)
 | Head-to-head pressure | `5.0 - 2.0×late` | Bonus/penalty when heads ≤2 Manhattan distance |
 | Opponent confinement | 50.0 / 15.0 | Opponent has 0 / 1 safe moves |
 | Food urgency | `0.5 × (threshold - health)` | Inverse distance to nearest food, gated by health |
-| Food control | `1.5 × early` | Food cells in our Voronoi territory (early game only) |
+| Food cluster value | `1.5 × early` | Distance-weighted food quality (sum 1/dist), early game |
+| Food reach advantage | 0.5 | Opponent's closest food dist minus ours |
+| Food denial | 2.0 | Bonus when opponent has 0 food and health < 40 |
+| Starvation risk | 2.5 | Penalty when we have 0 food and health < 50 |
+| Growth urgency | `0.3 × early` | Penalty when snake length < expected for turn |
 
 ### Game Phase
 
@@ -83,8 +87,8 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 |-----------|------|--------|
 | CloneFromPool | 19ns | 0 |
 | Step | 49ns | 0 |
-| Evaluate | 1090ns | 0 |
-| BRS node (Clone+Step+Eval) | ~1130ns | 0 |
+| Evaluate | ~1130ns | 0 |
+| BRS node (Clone+Step+Eval) | ~1180ns | 0 |
 
 ## Version History
 
@@ -102,6 +106,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 16 | VoronoiResult infrastructure | (infra only) |
 | 17 | Game-phase adaptive eval | 59% vs v16, ~451 avg turns |
 | 19 | Voronoi strategic extraction | (infra only) |
+| 20 | Food strategy signals | 54% vs v19, ~443 avg turns |
 
 ## Dead Ends
 

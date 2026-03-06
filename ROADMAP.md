@@ -9,9 +9,9 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iterations 1-19 (see ROADMAP_FINISHED.md) |
-| **Next** | Iteration 20 |
-| **Current** | v19 Voronoi strategic extraction (infra); BRS depth 14; ~451 avg turns; Voronoi ~1025ns/0 allocs |
+| **Completed** | Iterations 1-20 (see ROADMAP_FINISHED.md) |
+| **Next** | Iteration 21 |
+| **Current** | v20 Food strategy signals; BRS depth 14; ~443 avg turns; Evaluate ~1130ns/0 allocs |
 | **Key insight** | Search mechanics exhausted at BF=4. The remaining lever is **eval quality** — specifically, strategic board understanding that goes beyond snapshot scoring. |
 
 ---
@@ -25,62 +25,6 @@
 > The Voronoi BFS already computes `owner[]` and `dist[]` for every cell but we discard most of it.
 > These iterations extract strategic signals from existing data and teach the eval to reason about
 > the whole board, not just count cells.
-
-### Iteration 20 — Food Strategy Signals
-
-**Status:** TODO
-**Depends on:** Iteration 19
-
-**Goal:** Teach the eval to reason about food access quality, not just food count. "3 food nearby in my territory" should score very differently from "3 food scattered across the opponent's side."
-
-**Problem:** Current food awareness is limited to:
-- `vr.MyFood` count (how many food items in our territory — no distance weighting)
-- `foodUrgency` (only activates below health threshold, only nearest single food)
-- `1.5 * earlyBlend * vr.MyFood` (early-game food control — flat count, no quality)
-
-A snake with 3 food at BFS distance 2-3 has a massive growth opportunity. A snake with 3 food at distance 8-10 effectively has nothing. The eval treats them the same.
-
-**New signals:**
-
-1. **Food cluster value** (`MyFoodValue` from Iter 19): Replace flat `vr.MyFood` in food control with distance-weighted value. Closer food = exponentially more valuable.
-   ```
-   score += wFoodCluster * earlyBlend * vr.MyFoodValue
-   ```
-
-2. **Food reach advantage**: When we can reach food faster than the opponent, that's a strategic asset regardless of health level.
-   ```
-   if vr.MyClosestFoodDist > 0 && vr.OppClosestFoodDist > 0:
-       foodReachDelta = oppClosest - myClosest  // positive = we're closer
-       score += wFoodReach * foodReachDelta
-   ```
-
-3. **Food denial**: When opponent has NO food in their territory (`OppFood == 0`) and their health is declining, we're winning the resource war. Conversely, when we have no food access, danger.
-   ```
-   if vr.OppFood == 0 && opp.Health < 40:
-       score += wFoodDenial * (40 - opp.Health) / 40.0
-   if vr.MyFood == 0 && me.Health < 50:
-       score -= wStarvationRisk * (50 - me.Health) / 50.0
-   ```
-
-4. **Growth urgency**: Phase-aware signal that asks "am I long enough for this stage of the game?" Not just length delta vs opponent, but absolute adequacy.
-   ```
-   expectedLen = 3 + g.Turn/10  // rough: should be ~13 by turn 100
-   if me.Length < expectedLen:
-       growthNeed = earlyBlend * float64(expectedLen - me.Length)
-       // boosts value of food access when we're behind schedule
-   ```
-
-**Phase interaction:** Food cluster + reach + denial strongest in early/mid game (earlyBlend and midgame). Growth urgency fades as lateBlend increases. Food denial relevant at all phases.
-
-**Files:**
-| File | Action |
-|------|--------|
-| `logic/eval.go` | Add food strategy signals, phase-weight them |
-| `logic/eval_test.go` | Test food cluster scoring, denial detection, growth urgency |
-
-**Verify:** `make snapshot` then `make compare PREV=<v19-snapshot> N=100` — target: >53%.
-
----
 
 ### Iteration 21 — Positional Quality
 
@@ -129,7 +73,7 @@ A snake with 3 food at BFS distance 2-3 has a massive growth opportunity. A snak
 ### Iteration 22 — Opponent Pressure & Aggression Mode
 
 **Status:** TODO
-**Depends on:** Iteration 20, 21
+**Depends on:** Iterations 20, 21
 
 **Goal:** Adapt play style based on relative strength. When we're dominant (longer + better food access + more territory), play aggressively to close out the game. When we're weaker, play defensively to survive and find food.
 
@@ -300,7 +244,7 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | Iteration | Snapshot | Avg Turns | Notes |
 |-----------|----------|-----------|-------|
 | 19 | | | Voronoi strategic extraction (infra) |
-| 20 | | | Food strategy signals |
+| 20 | `snapshots/haruko-a989fbb` | ~443 | Food strategy signals; 54% vs v19 |
 | 21 | | | Positional quality |
 | 22 | | | Opponent pressure & aggression mode |
 | 23 | | | Late-game survival intelligence |

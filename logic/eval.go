@@ -91,8 +91,38 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 	wTerritory := 1.0 - 0.2*earlyBlend + 0.3*lateBlend
 	score := wTerritory * float64(vr.MyTerritory-vr.OppTerritory)
 
-	// Early-game food control.
-	score += 1.5 * earlyBlend * float64(vr.MyFood)
+	// Early-game food control (distance-weighted, not flat count).
+	score += 1.5 * earlyBlend * vr.MyFoodValue // wFoodCluster
+
+	// Food reach advantage.
+	if vr.MyClosestFoodDist > 0 && vr.OppClosestFoodDist > 0 {
+		foodReachDelta := float64(vr.OppClosestFoodDist - vr.MyClosestFoodDist)
+		score += 0.5 * foodReachDelta // wFoodReach
+	}
+
+	// Food denial (check against first alive opponent).
+	for i := range g.Snakes {
+		opp := &g.Snakes[i]
+		if i == myIdx || !opp.IsAlive() {
+			continue
+		}
+		if vr.OppFood == 0 && opp.Health < 40 {
+			score += 2.0 * float64(40-opp.Health) / 40.0 // wFoodDenial
+		}
+		break
+	}
+	// Starvation risk (independent of opponent).
+	if vr.MyFood == 0 && me.Health < 50 {
+		score -= 2.5 * float64(50-me.Health) / 50.0 // wStarvationRisk
+	}
+
+	// Growth urgency: penalize being undersized in early game.
+	if earlyBlend > 0 {
+		expectedLen := 3 + g.Turn/10
+		if me.Length < expectedLen {
+			score -= 0.3 * earlyBlend * float64(expectedLen-me.Length) // wGrowthUrgency
+		}
+	}
 
 	// Phase-modulated weights.
 	wLen := 2.0 + 1.0*earlyBlend - 0.5*lateBlend
