@@ -10,10 +10,10 @@
 | Metric | Value |
 |--------|-------|
 | **Completed** | Iterations 1-20 (see ROADMAP_FINISHED.md) |
-| **Dead ends** | Iter 21 (positional quality — Voronoi already captures it) |
-| **Next** | Iteration 22 |
+| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression — self-play symmetry) |
+| **Next** | Iteration 23 |
 | **Current** | v20 Food strategy signals; BRS depth 14; ~443 avg turns; Evaluate ~1130ns/0 allocs |
-| **Key insight** | Search mechanics exhausted at BF=4. The remaining lever is **eval quality** — but new signals must add genuinely new information, not restate what Voronoi territory already captures. |
+| **Key insight** | Search mechanics exhausted at BF=4. Eval quality is the lever, but new signals must add genuinely new information. Dominance-based weight modulation is ineffective in self-play (both sides share eval). |
 
 ---
 
@@ -33,53 +33,9 @@ All three signals (edge/corner penalty, territory depth adequacy, center-of-mass
 
 ---
 
-### Iteration 22 — Opponent Pressure & Aggression Mode
+### Iteration 22 — Opponent Pressure & Aggression Mode ❌ DEAD END
 
-**Status:** TODO
-**Depends on:** Iteration 20
-
-**Goal:** Adapt play style based on relative strength. When we're dominant (longer + better food access + more territory), play aggressively to close out the game. When we're weaker, play defensively to survive and find food.
-
-**Problem:** Current eval rewards being in good positions but doesn't shift *strategy* based on who's winning. A snake that's 5 cells longer should actively cut off the opponent, not just passively maintain territory. A snake that's shorter should avoid confrontation zones entirely.
-
-**New signals:**
-
-1. **Dominance score** (composite): Combine length ratio, territory ratio, and food access into a single continuous dominance factor (-1.0 to +1.0).
-   ```
-   lenRatio = clamp(float64(me.Length - opp.Length) / 5.0, -1, 1)
-   terrRatio = clamp(float64(vr.MyTerritory - vr.OppTerritory) / 20.0, -1, 1)
-   foodRatio = clamp(float64(vr.MyFood - vr.OppFood) / 3.0, -1, 1)
-   dominance = 0.4*lenRatio + 0.4*terrRatio + 0.2*foodRatio
-   ```
-
-2. **Aggression modulation**: When dominant (dominance > 0.3), boost h2h pressure range (activate at dist ≤ 4 instead of ≤ 2), increase confinement weight. When losing (dominance < -0.3), reduce h2h range to 1 (avoid fights), boost food urgency threshold.
-   ```
-   h2hRange = 2 + int(2 * max(dominance, 0))      // 2 normally, up to 4 when dominant
-   wConfinement = baseConfinement * (1 + dominance) // amplify when winning
-   ```
-
-3. **Opponent health exploitation**: When opponent health < 30 AND we control more food, the opponent is in a resource crisis. Bonus proportional to their desperation — they'll be forced into risky moves.
-   ```
-   if opp.Health < 30 && vr.MyFood > vr.OppFood:
-       score += wHealthPressure * float64(30 - opp.Health) / 30.0
-   ```
-
-4. **Directional pressure**: When dominant, prefer positions that push the opponent toward edges/corners (reduce their centroid distance to board edge). Use opponent centroid from Iter 19.
-   ```
-   if dominance > 0.2:
-       oppEdgeness = boardCenterDist(oppCenter)
-       score += wPushToEdge * dominance * oppEdgeness
-   ```
-
-**Phase interaction:** Aggression mode primarily mid-game (earlyBlend low, lateBlend low). In early game, always prioritize growth. In late game / partition, aggression is irrelevant.
-
-**Files:**
-| File | Action |
-|------|--------|
-| `logic/eval.go` | Dominance computation, aggression modulation, health exploitation |
-| `logic/eval_test.go` | Test dominance factor, h2h range expansion, health pressure |
-
-**Verify:** `make compare N=100` — target: >55%. This should be a significant improvement because it changes how the snake plays, not just how it scores.
+Dominance score (length+territory+food composite) used to modulate H2H range, confinement weights, health pressure, directional pressure. Tested 7 variants isolating each signal (42–49%). Root cause: in self-play, both sides use the same eval, so aggression modulation gives no asymmetric advantage. The search already finds aggressive moves when they lead to better positions. See ENGINE.md dead ends.
 
 ---
 
@@ -146,18 +102,18 @@ All three signals (edge/corner penalty, territory depth adequacy, center-of-mass
 ### Iteration 24 — Weight Calibration
 
 **Status:** TODO
-**Depends on:** Iterations 20-23
+**Depends on:** Iterations 20, 23
 
-**Goal:** Systematically tune all eval weights now that the eval has rich, meaningful signals from Iter 19-23. Many weights were set by intuition during development.
+**Goal:** Systematically tune all eval weights now that the eval has rich, meaningful signals. Many weights were set by intuition during development.
 
-**Weights to tune (~15-18):**
+**Weights to tune (~12-15):**
 
 | Category | Weights |
 |----------|---------|
 | Existing | wTerritory coefficients, wLen, wH2H, confinement (50/15), tail chase (3.0), food urgency (0.5) |
 | Food strategy (Iter 20) | wFoodCluster, wFoodReach, wFoodDenial, wStarvationRisk |
 | Positional (Iter 21) | ❌ Dead end — no weights to tune |
-| Aggression (Iter 22) | dominance blend ratios, wHealthPressure, wPushToEdge, h2hRange scaling |
+| Aggression (Iter 22) | ❌ Dead end — no weights to tune |
 | Late-game (Iter 23) | wSpaceCrisis, wPartitionStarve, wPartitionFood, wTailReachable, wOutlast |
 
 **Approach:**
@@ -209,7 +165,7 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | 19 | | | Voronoi strategic extraction (infra) |
 | 20 | `snapshots/haruko-a989fbb` | ~443 | Food strategy signals; 54% vs v19 |
 | 21 | — | — | ❌ Dead end (37–48%) |
-| 22 | | | Opponent pressure & aggression mode |
+| 22 | — | — | ❌ Dead end (42–49%) |
 | 23 | | | Late-game survival intelligence |
 | 24 | | | Weight calibration |
 | 25 | | | Territory shape quality (optional) |
