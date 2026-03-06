@@ -2,7 +2,7 @@ BINARY   := haruko
 PORT     := 8080
 BS       := go tool battlesnake
 
-.PHONY: build run play local clean
+.PHONY: build run play local clean trace analyze
 
 ## build: compile the snake server binary
 build:
@@ -55,6 +55,19 @@ compare: build
 		-a-name "current" -a-url http://localhost:$(PORT) \
 		-b-name "prev"    -b-url http://localhost:8081
 	@kill $$(cat .snake.pid) 2>/dev/null && rm -f .snake.pid || true
+
+## trace N=10: self-play with tracing enabled
+trace: build
+	@mkdir -p traces
+	@HARUKO_TRACE=1 PORT=$(PORT) ./$(BINARY) & echo $$! > .snake.pid
+	@sleep 0.5
+	go run ./cmd/bench -games $(or $(N),10) -a-name Haruko -b-name Haruko \
+		-a-url http://localhost:$(PORT) -b-url http://localhost:$(PORT)
+	@kill $$(cat .snake.pid) 2>/dev/null && rm -f .snake.pid || true
+
+## analyze MODE=summary: run analysis on trace files
+analyze:
+	go run ./cmd/analyze -mode $(or $(MODE),summary) traces/*.jsonl
 
 ## clean: remove build artifacts
 clean:

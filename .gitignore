@@ -35,6 +35,9 @@ haruko
 snapshots/
 *.jsonl
 
+# Trace output
+traces/
+
 # Editor/IDE
 # .idea/
 # .vscode/

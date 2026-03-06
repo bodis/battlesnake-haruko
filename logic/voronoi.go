@@ -8,17 +8,39 @@ type voronoiWorkspace struct {
 	dist    [maxBoardCells]int16
 	blocked [maxBoardCells]bool
 	queue   []voronoiEntry
+
+	// Tarjan's articulation point detection (iterative DFS).
+	disc        [maxBoardCells]int16
+	low         [maxBoardCells]int16
+	subtree     [maxBoardCells]int16
+	apCut       [maxBoardCells]int16
+	isAP        [maxBoardCells]bool
+	dfsStack    [maxBoardCells]tarjanFrame
+	tarjanDirty [maxBoardCells]int16 // list of cells touched by Tarjan (for fast cleanup)
+	tarjanCount int                  // number of dirty cells
 }
 
 type voronoiEntry struct {
 	x, y int
 }
 
+type tarjanFrame struct {
+	cell     int16
+	parent   int16
+	dirIdx   int8
+	children int8
+}
+
 var voronoiPool = sync.Pool{
 	New: func() any {
-		return &voronoiWorkspace{
+		ws := &voronoiWorkspace{
 			queue: make([]voronoiEntry, 0, maxBoardCells),
 		}
+		// Initialize disc to -1 (unvisited) for Tarjan's.
+		for i := range ws.disc {
+			ws.disc[i] = -1
+		}
+		return ws
 	},
 }
 
@@ -44,6 +66,169 @@ type VoronoiResult struct {
 
 	// Tail reachability
 	MyTailReachable bool // true if our tail cell is in our Voronoi territory
+
+	// Bottleneck detection (articulation points in territory subgraph)
+	MyThreatenedTerritory  int // cells behind live APs in our territory
+	OppThreatenedTerritory int // cells behind live APs in opponent territory
+}
+
+// findThreatenedTerritory runs iterative Tarjan's algorithm on the territory
+// subgraph for the given tag. Returns the total cells behind "live" articulation
+// points (APs adjacent to non-owned cells). width is the board width.
+func (ws *voronoiWorkspace) findThreatenedTerritory(tag int8, rootCell int16, territorySize, size, width int) int {
+	if territorySize < 8 || rootCell < 0 {
+		return 0
+	}
+	root := rootCell
+	height := size / width
+
+	// Clean up cells from previous Tarjan run (avoids full-array clear).
+	for i := 0; i < ws.tarjanCount; i++ {
+		c := ws.tarjanDirty[i]
+		ws.disc[c] = -1
+		ws.isAP[c] = false
+		ws.apCut[c] = 0
+	}
+	ws.tarjanCount = 0
+
+	// Mark root and track as dirty.
+	ws.disc[root] = 0
+	ws.low[root] = 0
+	ws.subtree[root] = 1
+	ws.tarjanDirty[0] = root
+	ws.tarjanCount = 1
+
+	// Iterative Tarjan's DFS.
+	timer := int16(1)
+	sp := 0 // stack pointer
+	ws.dfsStack[0] = tarjanFrame{cell: root, parent: -1, dirIdx: 0, children: 0}
+
+	for sp >= 0 {
+		frame := &ws.dfsStack[sp]
+		cell := frame.cell
+		cx := int(cell) % width
+		cy := int(cell) / width
+
+		// Try next neighbor direction.
+		advanced := false
+		for frame.dirIdx < 4 {
+			d := frame.dirIdx
+			frame.dirIdx++
+
+			var nx, ny int
+			switch d {
+			case 0:
+				nx, ny = cx, cy+1
+			case 1:
+				nx, ny = cx, cy-1
+			case 2:
+				nx, ny = cx-1, cy
+			case 3:
+				nx, ny = cx+1, cy
+			}
+
+			if nx < 0 || nx >= width || ny < 0 || ny >= height {
+				continue
+			}
+			ni := int16(ny*width + nx)
+			if ws.owner[ni] != tag {
+				continue
+			}
+
+			if ws.disc[ni] == -1 {
+				// Tree edge: push child.
+				ws.disc[ni] = timer
+				ws.low[ni] = timer
+				ws.subtree[ni] = 1
+				ws.tarjanDirty[ws.tarjanCount] = ni
+				ws.tarjanCount++
+				timer++
+				sp++
+				ws.dfsStack[sp] = tarjanFrame{cell: ni, parent: cell, dirIdx: 0, children: 0}
+				advanced = true
+				break
+			} else if ni != frame.parent {
+				// Back edge: update low.
+				if ws.disc[ni] < ws.low[cell] {
+					ws.low[cell] = ws.disc[ni]
+				}
+			}
+		}
+
+		if advanced {
+			continue
+		}
+
+		// Pop: propagate to parent.
+		if sp > 0 {
+			parent := &ws.dfsStack[sp-1]
+			parentCell := parent.cell
+
+			// Propagate low.
+			if ws.low[cell] < ws.low[parentCell] {
+				ws.low[parentCell] = ws.low[cell]
+			}
+
+			// Accumulate subtree size.
+			ws.subtree[parentCell] += ws.subtree[cell]
+
+			// Check AP condition for non-root.
+			parent.children++
+			if ws.low[cell] >= ws.disc[parentCell] {
+				if parentCell != root {
+					ws.isAP[parentCell] = true
+					if ws.subtree[cell] > ws.apCut[parentCell] {
+						ws.apCut[parentCell] = ws.subtree[cell]
+					}
+				}
+			}
+		}
+
+		// Root AP check: 2+ DFS children.
+		if cell == root && frame.children >= 2 {
+			ws.isAP[root] = true
+		}
+
+		sp--
+	}
+
+	// Sum threatened territory from live APs (adjacent to non-owned cell).
+	threatened := 0
+	for i := 0; i < ws.tarjanCount; i++ {
+		ci := ws.tarjanDirty[i]
+		if !ws.isAP[ci] {
+			continue
+		}
+		cx := int(ci) % width
+		cy := int(ci) / width
+		live := false
+		for d := 0; d < 4; d++ {
+			var nx, ny int
+			switch d {
+			case 0:
+				nx, ny = cx, cy+1
+			case 1:
+				nx, ny = cx, cy-1
+			case 2:
+				nx, ny = cx-1, cy
+			case 3:
+				nx, ny = cx+1, cy
+			}
+			if nx < 0 || nx >= width || ny < 0 || ny >= height {
+				continue
+			}
+			ni := ny*width + nx
+			if ws.owner[ni] != tag {
+				live = true
+				break
+			}
+		}
+		if live {
+			threatened += int(ws.apCut[ci])
+		}
+	}
+
+	return threatened
 }
 
 // VoronoiTerritory performs a multi-source BFS from all alive snake heads
@@ -212,6 +397,21 @@ func VoronoiTerritory(g *GameSim, myIdx int) VoronoiResult {
 		tail := me.Tail()
 		if tail.X >= 0 && tail.X < g.Width && tail.Y >= 0 && tail.Y < g.Height {
 			result.MyTailReachable = ws.owner[tail.Y*g.Width+tail.X] == myTag
+		}
+	}
+
+	// Bottleneck detection: find threatened territory behind articulation points.
+	myHead := me.Head()
+	myRootCell := int16(myHead.Y*g.Width + myHead.X)
+	result.MyThreatenedTerritory = ws.findThreatenedTerritory(myTag, myRootCell, result.MyTerritory, size, g.Width)
+	// Find first alive opponent for opponent bottleneck.
+	for i := range g.Snakes {
+		if i != myIdx && g.Snakes[i].IsAlive() {
+			oppTag := int8(i + 1)
+			oppHead := g.Snakes[i].Head()
+			oppRootCell := int16(oppHead.Y*g.Width + oppHead.X)
+			result.OppThreatenedTerritory = ws.findThreatenedTerritory(oppTag, oppRootCell, result.OppTerritory, size, g.Width)
+			break
 		}
 	}
 

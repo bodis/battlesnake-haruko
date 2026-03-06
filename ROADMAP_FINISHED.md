@@ -378,3 +378,28 @@ Every past win came from deeper search or better eval. Search mechanics (pruning
 **Cost:** Evaluate ~1130ns (was ~1090ns). Zero new allocations.
 
 **Result:** 54% vs v19. ~443 avg turns.
+
+---
+
+### Iteration 23 — Territory Bottleneck Detection
+
+**Status:** DONE
+**Depends on:** Iteration 19
+
+**Goal:** Detect territory bottlenecks — articulation points in the territory subgraph that opponents can exploit to sever corridor-shaped territory.
+
+**Analysis finding:** In every loss traceback, the largest signal drop is territory (eval +55 → -90 in 1-2 turns). Voronoi counts cells but not cell quality — a corridor of 55 cells looks identical to a compact 55-cell region. The search can't see it because even at depth 14, leaf nodes report "+55 territory" until the corridor is actually cut.
+
+**What was built:**
+- **Tarjan's articulation point algorithm** on territory subgraph (iterative, zero-alloc)
+- **Border filter**: Only count APs adjacent to non-owned cells ("live" APs — exploitable by opponent)
+- **Dual-use**: `MyThreatenedTerritory` (defense) and `OppThreatenedTerritory` (attack)
+- **Eval signal**: `wBottleneck = 0.3 × (0.5 + 0.5×lateBlend)` — 0.15 early, 0.3 late
+- **Early exit**: Skip if territory < 8 cells
+- **Dirty-list cleanup**: Only clear Tarjan arrays for cells actually visited (avoids full-array clear)
+- 5 Voronoi tests: corridor, compact, opponent corridor, internal AP ignored, small territory
+- 1 eval test: bottleneck signal fires correctly
+
+**Cost:** Voronoi ~2400ns (was ~1025ns), Evaluate ~2450ns (was ~1130ns), BRS node ~2490ns (was ~1180ns). Zero allocations. Roughly halves effective search depth (~12-13 from ~14), but eval improvement more than compensates.
+
+**Result:** 58% vs v20 (two independent N=50 runs both at 58%). ~287-350 avg turns.

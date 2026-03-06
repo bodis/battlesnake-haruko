@@ -3,8 +3,8 @@ package logic
 import "math/rand"
 
 const (
-	maxBoardCells = 121 // 11×11
-	maxBodyLen    = 121
+	maxBoardCells = 361 // 19×19 (supports 7x7, 11x11, 19x19)
+	maxBodyLen    = 361
 )
 
 var (

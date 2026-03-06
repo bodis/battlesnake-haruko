@@ -20,10 +20,12 @@ func info() BattlesnakeInfoResponse {
 
 func start(state GameState) {
 	log.Printf("GAME START %s\n", state.Game.ID)
+	traceStart(state.Game.ID, state.You.ID, state.Board.Width, state.Board.Height)
 }
 
 func end(state GameState) {
 	log.Printf("GAME OVER  %s\n", state.Game.ID)
+	traceEnd(state.Game.ID, state.You.ID, state)
 }
 
 func move(state GameState) BattlesnakeMoveResponse {
@@ -31,6 +33,7 @@ func move(state GameState) BattlesnakeMoveResponse {
 	dir := sim.BestMoveIterative(state.You.ID, 300*time.Millisecond)
 	m := logic.DirectionName(dir)
 	log.Printf("MOVE %d: %s (health=%d)\n", state.Turn, m, state.You.Health)
+	traceTurn(state.Game.ID, state.You.ID, state, sim, m)
 	return BattlesnakeMoveResponse{Move: m}
 }
 

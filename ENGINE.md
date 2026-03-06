@@ -30,7 +30,7 @@ HTTP request (GameState JSON)
 
 ## Search
 
-**Best-Reply Search (BRS)** — 2-player minimax where only the "best replier" opponent moves each ply. Branching factor: 4×4=16 per ply pair. Iterative deepening up to depth 14 within 300ms.
+**Best-Reply Search (BRS)** — 2-player minimax where only the "best replier" opponent moves each ply. Branching factor: 4×4=16 per ply pair. Iterative deepening up to depth 14 within 300ms. Depth adapts automatically to board size via time budget.
 
 **Move ordering:** PV/TT move → killer heuristics → static fallback. This is sufficient for BF=4.
 
@@ -56,6 +56,7 @@ HTTP request (GameState JSON)
 | Food denial | 2.0 | Bonus when opponent has 0 food and health < 40 |
 | Starvation risk | 2.5 | Penalty when we have 0 food and health < 50 |
 | Growth urgency | `0.3 × early` | Penalty when snake length < expected for turn |
+| Bottleneck | `0.3 × (0.5 + 0.5×late)` | Territory behind live articulation points (Tarjan's) |
 
 ### Game Phase
 
@@ -76,8 +77,17 @@ Multi-source BFS from all alive heads. Body segments block, tails are passable. 
 - `MyTerritoryDepth` — max BFS distance in our territory
 - `MyCenterX/Y`, `OppCenterX/Y` — territory centroids
 - `MyTailReachable` — tail cell in our Voronoi territory
+- `MyThreatenedTerritory`, `OppThreatenedTerritory` — cells behind live articulation points (Tarjan's)
 
-Zero-alloc (workspace pooled). ~1025ns per call.
+Zero-alloc (workspace pooled). ~2400ns per call (includes Tarjan's bottleneck detection).
+
+## Performance
+
+### Board Size Support
+
+Supports 7×7, 11×11, and 19×19 boards (all standard Battlesnake sizes). Board dimensions come from the API at game start — no configuration needed.
+
+All fixed-size arrays use `maxBoardCells = 361` (19×19). Loops iterate only `Width × Height` cells, so 11×11 games pay no cost for the larger arrays. Iterative deepening naturally adapts search depth to the time budget — on 19×19 with ~3× more cells, eval is slower so the engine reaches fewer plies (est. depth 6–8 vs 12–13 on 11×11), but still uses the full 300ms.
 
 ## Performance
 
@@ -87,8 +97,8 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 |-----------|------|--------|
 | CloneFromPool | 19ns | 0 |
 | Step | 49ns | 0 |
-| Evaluate | ~1130ns | 0 |
-| BRS node (Clone+Step+Eval) | ~1180ns | 0 |
+| Evaluate | ~2450ns | 0 |
+| BRS node (Clone+Step+Eval) | ~2490ns | 0 |
 
 ## Version History
 
@@ -107,6 +117,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 17 | Game-phase adaptive eval | 59% vs v16, ~451 avg turns |
 | 19 | Voronoi strategic extraction | (infra only) |
 | 20 | Food strategy signals | 54% vs v19, ~443 avg turns |
+| 23 | Territory bottleneck detection (Tarjan's AP) | 58% vs v20 |
 
 ## Dead Ends
 

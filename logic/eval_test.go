@@ -1,6 +1,9 @@
 package logic
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 // helper: build a minimal 2-snake GameSim on an 11x11 board.
 func twoSnakeGame(me, opp SimSnake) *GameSim {
@@ -339,6 +342,139 @@ func TestEval_FoodDenial(t *testing.T) {
 
 	if scoreDenial <= scoreNoDenial {
 		t.Errorf("food denial should score higher: denial=%f noDenial=%f", scoreDenial, scoreNoDenial)
+	}
+}
+
+func TestEvaluateDetailed_Consistency(t *testing.T) {
+	// EvaluateDetailed().Total must match Evaluate() for various positions.
+	tests := []struct {
+		name string
+		g    *GameSim
+		idx  int
+	}{
+		{
+			"basic two-snake",
+			twoSnakeGame(
+				makeSnake("me", []Coord{{5, 5}, {5, 4}, {5, 3}, {5, 2}}),
+				makeSnake("opp", []Coord{{5, 9}, {5, 10}}),
+			),
+			0,
+		},
+		{
+			"early game with food",
+			func() *GameSim {
+				g := twoSnakeGame(
+					makeSnake("me", []Coord{{3, 3}, {3, 2}, {3, 1}}),
+					makeSnake("opp", []Coord{{8, 8}, {8, 7}, {8, 6}}),
+				)
+				g.Food = []Coord{{2, 3}, {4, 3}, {9, 8}}
+				g.Turn = 5
+				return g
+			}(),
+			0,
+		},
+		{
+			"dead snake",
+			twoSnakeGame(
+				SimSnake{ID: "me", Body: []Coord{{5, 5}}, Health: 0, Length: 1, EliminatedCause: "starvation"},
+				makeSnake("opp", []Coord{{3, 3}, {3, 2}}),
+			),
+			0,
+		},
+		{
+			"all opps dead",
+			twoSnakeGame(
+				makeSnake("me", []Coord{{5, 5}, {5, 4}}),
+				SimSnake{ID: "opp", Body: []Coord{{3, 3}}, Health: 0, Length: 1, EliminatedCause: "collision"},
+			),
+			0,
+		},
+		{
+			"low health starvation risk",
+			func() *GameSim {
+				g := twoSnakeGame(
+					makeSnake("me", []Coord{{3, 3}, {3, 2}, {3, 1}}),
+					makeSnake("opp", []Coord{{8, 8}, {8, 7}, {8, 6}}),
+				)
+				g.Snakes[0].Health = 15
+				g.Turn = 30
+				return g
+			}(),
+			0,
+		},
+		{
+			"late game crowded",
+			func() *GameSim {
+				meBody := make([]Coord, 20)
+				for i := range meBody {
+					meBody[i] = Coord{i % 11, i / 11}
+				}
+				meBody[0] = Coord{3, 3}
+				oppBody := make([]Coord, 20)
+				for i := range oppBody {
+					oppBody[i] = Coord{10 - i%11, 10 - i/11}
+				}
+				oppBody[0] = Coord{8, 8}
+				g := twoSnakeGame(
+					makeSnake("me", meBody),
+					makeSnake("opp", oppBody),
+				)
+				g.Turn = 150
+				return g
+			}(),
+			0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := EvaluateDetailed(tc.g, tc.idx)
+			want := Evaluate(tc.g, tc.idx)
+			if math.Abs(got.Total-want) > 1e-9 {
+				t.Errorf("EvaluateDetailed().Total=%f != Evaluate()=%f (diff=%e)",
+					got.Total, want, got.Total-want)
+			}
+		})
+	}
+}
+
+func TestEval_BottleneckPenalty(t *testing.T) {
+	// Corridor territory should have a non-zero bottleneck signal.
+	gCorridor := &GameSim{
+		Width:  7,
+		Height: 5,
+		Snakes: []SimSnake{
+			makeSnake("me", []Coord{{0, 2}, {0, 1}}),
+			{ID: "opp", Body: []Coord{{5, 3}, {2, 3}, {3, 3}, {4, 3}, {5, 1}, {4, 1}, {3, 1}, {2, 1}, {5, 2}}, Health: 100, Length: 9},
+		},
+		Turn: 100,
+	}
+
+	bdCorridor := EvaluateDetailed(gCorridor, 0)
+	if bdCorridor.Bottleneck == 0 {
+		t.Error("corridor position should have non-zero bottleneck signal")
+	}
+
+	// Compact: open board — bottleneck should be zero.
+	gCompact := &GameSim{
+		Width:  11,
+		Height: 11,
+		Snakes: []SimSnake{
+			makeSnake("me", []Coord{{1, 1}, {1, 0}}),
+			makeSnake("opp", []Coord{{9, 9}, {9, 10}}),
+		},
+		Turn: 100,
+	}
+
+	bdCompact := EvaluateDetailed(gCompact, 0)
+	if bdCompact.Bottleneck != 0 {
+		t.Errorf("compact position should have zero bottleneck, got %f", bdCompact.Bottleneck)
+	}
+
+	// Verify the VoronoiResult correctly identifies our threatened territory.
+	vr := VoronoiTerritory(gCorridor, 0)
+	if vr.MyThreatenedTerritory == 0 {
+		t.Error("corridor: expected MyThreatenedTerritory > 0")
 	}
 }
 

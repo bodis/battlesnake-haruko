@@ -67,8 +67,8 @@ func orderedMoves(pv Direction, hasPV bool, killers [2]Direction, hasKillers [2]
 	return result
 }
 
-// resolveIdx finds the snake index for the given ID.
-func (g *GameSim) resolveIdx(id string) int {
+// ResolveIdx finds the snake index for the given ID.
+func (g *GameSim) ResolveIdx(id string) int {
 	for i := range g.Snakes {
 		if g.Snakes[i].ID == id {
 			return i
@@ -79,7 +79,7 @@ func (g *GameSim) resolveIdx(id string) int {
 
 // BestMove runs paranoid minimax with alpha-beta pruning to the given depth.
 func (g *GameSim) BestMove(myID string, depth int) Direction {
-	myIdx := g.resolveIdx(myID)
+	myIdx := g.ResolveIdx(myID)
 	if myIdx == -1 {
 		return Down
 	}
@@ -107,7 +107,7 @@ func (g *GameSim) BestMove(myID string, depth int) Direction {
 
 // BestMoveIterative runs iterative deepening with BRS (Best-Reply Search).
 func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction {
-	myIdx := g.resolveIdx(myID)
+	myIdx := g.ResolveIdx(myID)
 	if myIdx == -1 {
 		return Down
 	}
@@ -157,6 +157,7 @@ func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction
 		bestDir = depthBest
 		pvMove = depthBest
 		hasPV = true
+		g.LastCompletedDepth = depth
 	}
 
 	return bestDir

@@ -9,11 +9,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iterations 1-20 (see ROADMAP_FINISHED.md) |
+| **Completed** | Iterations 1-20, 23 (see ROADMAP_FINISHED.md) |
 | **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression — self-play symmetry) |
-| **Next** | Iteration 23 |
-| **Current** | v20 Food strategy signals; BRS depth 14; ~443 avg turns; Evaluate ~1130ns/0 allocs |
-| **Key insight** | Search mechanics exhausted at BF=4. Eval quality is the lever, but new signals must add genuinely new information. Dominance-based weight modulation is ineffective in self-play (both sides share eval). |
+| **Next** | Iteration 24 |
+| **Current** | v23 Territory bottleneck detection; BRS depth ~12-13; Evaluate ~2450ns/0 allocs; 58% vs v20 |
+| **Key insight** | Eval quality > search depth. Tarjan's AP detection adds genuinely new structural info (cell quality vs cell count) that justifies the ~2x eval cost. |
 
 ---
 
@@ -39,63 +39,9 @@ Dominance score (length+territory+food composite) used to modulate H2H range, co
 
 ---
 
-### Iteration 23 — Late-Game Survival Intelligence
+### Iteration 23 — Territory Bottleneck Detection ✅ DONE
 
-**Status:** TODO
-**Depends on:** Iteration 19
-
-**Goal:** When the board is filling up or we're partitioned, the game becomes about space efficiency and not running into our own tail. The current eval has a basic tail-chase bonus but no deeper understanding of confined play.
-
-**Problem:** Late-game deaths are primarily from:
-- Running out of space (territory too small for body length)
-- Inefficient coiling (body wastes space by not following walls/edges)
-- Health depletion when partitioned with no food
-
-**New signals:**
-
-1. **Space-to-length ratio**: Territory cells vs body length. Below 1.5x = danger. Below 1.0x = critical (guaranteed death soon without opponent dying).
-   ```
-   spaceRatio = float64(vr.MyTerritory) / float64(me.Length)
-   if spaceRatio < 1.5:
-       score -= wSpaceCrisis * lateBlend * (1.5 - spaceRatio) * 20.0
-   ```
-
-2. **Partition food planning**: When partitioned (`IsPartitioned`), food in our territory becomes survival-critical. Score based on food count relative to how many turns we can survive.
-   ```
-   if vr.IsPartitioned:
-       turnsToStarve = me.Health  // 1 health/turn
-       if vr.MyFood == 0:
-           score -= wPartitionStarve * float64(max(100-turnsToStarve, 0)) / 100.0
-       else:
-           score += wPartitionFood * float64(vr.MyFood)
-   ```
-
-3. **Tail accessibility**: Beyond simple tail distance, check if our tail is actually *reachable* (not blocked by our own body). Use the Voronoi `dist[]` — if the tail cell is in our territory, it's reachable.
-   ```
-   tailIdx = tail.Y*width + tail.X
-   if owner[tailIdx] == myTag:
-       score += wTailReachable * lateBlend * 5.0
-   else:
-       score -= wTailBlocked * lateBlend * 3.0  // can't chase our own tail
-   ```
-   Note: This requires exposing tail reachability from the Voronoi workspace, either as a new VoronoiResult field or by checking `dist[]` for the tail cell.
-
-4. **Opponent space crisis detection**: If the opponent is in a worse space crisis than us (their spaceRatio < ours), we're likely to outlast them. Bonus.
-   ```
-   oppSpaceRatio = float64(vr.OppTerritory) / float64(opp.Length)
-   if spaceRatio > oppSpaceRatio:
-       score += wOutlast * lateBlend * (spaceRatio - oppSpaceRatio) * 5.0
-   ```
-
-**Phase interaction:** All signals gated by `lateBlend` — they're irrelevant early/mid game. Partition signals additionally gated by `IsPartitioned`.
-
-**Files:**
-| File | Action |
-|------|--------|
-| `logic/eval.go` | Add late-game survival signals (tail reachability already in `VoronoiResult` from Iter 19) |
-| `logic/eval_test.go` | Test space crisis, partition planning, tail reachability |
-
-**Verify:** `make compare N=100` — target: >53%. Late-game improvements may not show huge numbers in winrate since many games are decided before late game.
+Tarjan's articulation point algorithm on territory subgraph. Detects corridor-shaped territory vulnerable to being cut off. 58% vs v20. Moved to ROADMAP_FINISHED.md.
 
 ---
 
@@ -103,6 +49,7 @@ Dominance score (length+territory+food composite) used to modulate H2H range, co
 
 **Status:** TODO
 **Depends on:** Iterations 20, 23
+
 
 **Goal:** Systematically tune all eval weights now that the eval has rich, meaningful signals. Many weights were set by intuition during development.
 
@@ -112,9 +59,7 @@ Dominance score (length+territory+food composite) used to modulate H2H range, co
 |----------|---------|
 | Existing | wTerritory coefficients, wLen, wH2H, confinement (50/15), tail chase (3.0), food urgency (0.5) |
 | Food strategy (Iter 20) | wFoodCluster, wFoodReach, wFoodDenial, wStarvationRisk |
-| Positional (Iter 21) | ❌ Dead end — no weights to tune |
-| Aggression (Iter 22) | ❌ Dead end — no weights to tune |
-| Late-game (Iter 23) | wSpaceCrisis, wPartitionStarve, wPartitionFood, wTailReachable, wOutlast |
+| Bottleneck (Iter 23) | wBottleneck (0.3 base, phase-scaled) |
 
 **Approach:**
 1. One weight at a time: 2x it, 0.5x it, compare N=100 against current best
@@ -166,6 +111,6 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | 20 | `snapshots/haruko-a989fbb` | ~443 | Food strategy signals; 54% vs v19 |
 | 21 | — | — | ❌ Dead end (37–48%) |
 | 22 | — | — | ❌ Dead end (42–49%) |
-| 23 | | | Late-game survival intelligence |
+| 23 | `snapshots/haruko-0e6fdda` | ~287-350 | Territory bottleneck detection; 58% vs v20 |
 | 24 | | | Weight calibration |
 | 25 | | | Territory shape quality (optional) |

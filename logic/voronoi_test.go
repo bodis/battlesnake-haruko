@@ -335,6 +335,138 @@ func TestVoronoiResult_TailNotReachable(t *testing.T) {
 	}
 }
 
+func TestVoronoiResult_BottleneckCorridor(t *testing.T) {
+	// 7x5 board. Snake A's territory is a corridor through a 1-cell gap.
+	// Snake B's body creates a wall with a gap that A must pass through.
+	//
+	// Layout (7x5, y=0 bottom):
+	//   y=4: . . . . . . .
+	//   y=3: . . B B B B .
+	//   y=2: A . . . . B .
+	//   y=1: . . B B B B .
+	//   y=0: . . . . . . .
+	//
+	// Snake A at (0,2), snake B head at (5,3), body blocks a corridor.
+	// A's territory extends through the gap at (1,2) which is an AP.
+	g := &GameSim{
+		Width:  7,
+		Height: 5,
+		Snakes: []SimSnake{
+			{ID: "a", Body: []Coord{{0, 2}, {0, 1}}, Health: 100, Length: 2},
+			{ID: "b", Body: []Coord{{5, 3}, {2, 3}, {3, 3}, {4, 3}, {5, 1}, {4, 1}, {3, 1}, {2, 1}, {5, 2}}, Health: 100, Length: 9},
+		},
+	}
+	vr := VoronoiTerritory(g, 0)
+	if vr.MyThreatenedTerritory == 0 {
+		t.Error("expected MyThreatenedTerritory > 0 for corridor territory")
+	}
+}
+
+func TestVoronoiResult_BottleneckCompact(t *testing.T) {
+	// Snakes at opposite corners of 11x11 — compact territories, no bottlenecks.
+	g := &GameSim{
+		Width:  11,
+		Height: 11,
+		Snakes: []SimSnake{
+			{ID: "a", Body: []Coord{{1, 1}, {1, 0}}, Health: 100, Length: 2},
+			{ID: "b", Body: []Coord{{9, 9}, {9, 10}}, Health: 100, Length: 2},
+		},
+	}
+	vr := VoronoiTerritory(g, 0)
+	if vr.MyThreatenedTerritory != 0 {
+		t.Errorf("expected MyThreatenedTerritory=0 for compact territory, got %d", vr.MyThreatenedTerritory)
+	}
+}
+
+func TestVoronoiResult_BottleneckOpponent(t *testing.T) {
+	// Mirror: opponent has corridor territory, we should detect OppThreatenedTerritory.
+	g := &GameSim{
+		Width:  7,
+		Height: 5,
+		Snakes: []SimSnake{
+			{ID: "a", Body: []Coord{{5, 3}, {2, 3}, {3, 3}, {4, 3}, {5, 1}, {4, 1}, {3, 1}, {2, 1}, {5, 2}}, Health: 100, Length: 9},
+			{ID: "b", Body: []Coord{{0, 2}, {0, 1}}, Health: 100, Length: 2},
+		},
+	}
+	// myIdx=0 is the snake with the body wall, opponent (idx=1) has corridor
+	vr := VoronoiTerritory(g, 0)
+	if vr.OppThreatenedTerritory == 0 {
+		t.Error("expected OppThreatenedTerritory > 0 for opponent corridor")
+	}
+}
+
+func TestVoronoiResult_BottleneckInternalAPIgnored(t *testing.T) {
+	// Single snake owns entire small board — any internal APs should be
+	// ignored because they have no non-owned neighbors.
+	g := &GameSim{
+		Width:  5,
+		Height: 5,
+		Snakes: []SimSnake{
+			{ID: "a", Body: []Coord{{2, 2}, {2, 1}}, Health: 100, Length: 2},
+		},
+	}
+	vr := VoronoiTerritory(g, 0)
+	if vr.MyThreatenedTerritory != 0 {
+		t.Errorf("expected MyThreatenedTerritory=0 for single snake (no live APs), got %d",
+			vr.MyThreatenedTerritory)
+	}
+}
+
+func TestVoronoiResult_BottleneckSmallTerritory(t *testing.T) {
+	// Territory < 8 cells should skip bottleneck detection entirely.
+	g := &GameSim{
+		Width:  5,
+		Height: 3,
+		Snakes: []SimSnake{
+			{ID: "a", Body: []Coord{{0, 1}}, Health: 100, Length: 1},
+			{ID: "b", Body: []Coord{{4, 1}, {2, 0}, {2, 1}, {2, 2}, {3, 2}, {4, 2}}, Health: 100, Length: 6},
+		},
+	}
+	vr := VoronoiTerritory(g, 0)
+	// Snake A's territory is ~5 cells (left side of partition) — too small for bottleneck.
+	if vr.MyThreatenedTerritory != 0 {
+		t.Errorf("expected MyThreatenedTerritory=0 for small territory (<8), got %d",
+			vr.MyThreatenedTerritory)
+	}
+}
+
+func TestVoronoiResult_19x19Board(t *testing.T) {
+	// Verify the engine works on a 19x19 board without panicking.
+	g := &GameSim{
+		Width:  19,
+		Height: 19,
+		Snakes: []SimSnake{
+			{ID: "a", Body: []Coord{{1, 1}, {1, 0}}, Health: 100, Length: 2},
+			{ID: "b", Body: []Coord{{17, 17}, {17, 18}}, Health: 100, Length: 2},
+		},
+		Food: []Coord{{9, 9}},
+	}
+	vr := VoronoiTerritory(g, 0)
+	if vr.MyTerritory == 0 || vr.OppTerritory == 0 {
+		t.Errorf("expected non-zero territory on 19x19, got my=%d opp=%d", vr.MyTerritory, vr.OppTerritory)
+	}
+	total := vr.MyTerritory + vr.OppTerritory
+	// 19*19=361, minus 2 body segments, minus some tied cells
+	if total < 300 {
+		t.Errorf("expected substantial territory on 19x19, got total=%d", total)
+	}
+}
+
+func TestVoronoiResult_7x7Board(t *testing.T) {
+	g := &GameSim{
+		Width:  7,
+		Height: 7,
+		Snakes: []SimSnake{
+			{ID: "a", Body: []Coord{{1, 1}, {1, 0}}, Health: 100, Length: 2},
+			{ID: "b", Body: []Coord{{5, 5}, {5, 6}}, Health: 100, Length: 2},
+		},
+	}
+	vr := VoronoiTerritory(g, 0)
+	if vr.MyTerritory == 0 || vr.OppTerritory == 0 {
+		t.Errorf("expected non-zero territory on 7x7, got my=%d opp=%d", vr.MyTerritory, vr.OppTerritory)
+	}
+}
+
 func TestVoronoiResult_SingleSnakeDepthAndCentroid(t *testing.T) {
 	g := &GameSim{
 		Width:  5,

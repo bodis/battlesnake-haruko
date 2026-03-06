@@ -31,6 +31,8 @@ type GameSim struct {
 	Hazards       []Coord
 	Turn          int
 	poolRef       *pooledGameSim // back-reference for Release; nil if not pooled
+
+	LastCompletedDepth int // set by BestMoveIterative after search
 }
 
 // cloneSnakes deep-copies a SimSnake slice so no body backing arrays are shared.
@@ -83,7 +85,7 @@ func (gs *GameSim) Clone() *GameSim {
 
 // --- sync.Pool for GameSim clones ---
 
-const maxPoolBodyLen = 64
+const maxPoolBodyLen = 128 // covers typical snake lengths on boards up to 19x19
 
 type pooledGameSim struct {
 	gs      GameSim

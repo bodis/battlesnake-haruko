@@ -32,12 +32,13 @@ When finishing an iteration:
 - Logic package must not import main. API types convert via `coordsToLogic()`/`snakesToLogic()`.
 - Hot path must be zero-alloc. Use `CloneFromPool`/`Release`, stack arrays, `sync.Pool`.
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
+- Board sizes: 7x7, 11x11, 19x19 all supported. `maxBoardCells=361`. Loops use `Width*Height`, no 11x11 cost.
 
-## Current state (Iter 20, Iter 21+22 dead ends)
-Food strategy signals: distance-weighted food value, reach advantage, denial/starvation, growth urgency. BRS depth up to 14. Voronoi: ~1025ns/0 allocs. Evaluate: ~1130ns/0 allocs. BRS node: ~1.2µs/0 allocs. Self-play avg ~443 turns.
+## Current state (Iter 23, Iter 21+22 dead ends)
+Territory bottleneck detection (Tarjan's AP on territory subgraph). BRS depth ~12-13. Voronoi: ~2400ns/0 allocs. Evaluate: ~2450ns/0 allocs. BRS node: ~2.5µs/0 allocs. 58% vs v20.
 
 ## Direction
-Search mechanics are saturated (pruning, ordering, QS all failed — see ENGINE.md dead ends). The remaining lever is **eval quality** — but new signals must add genuinely new information, not restate what Voronoi already captures (Iter 21), and dominance-based weight modulation is ineffective in self-play (Iter 22). Next: late-game survival, weight calibration.
+Eval quality > search depth. Tarjan's AP adds genuinely new structural info. Next: weight calibration (Iter 24), late-game survival signals.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.
