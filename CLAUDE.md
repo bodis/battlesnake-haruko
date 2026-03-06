@@ -20,13 +20,21 @@ See [ENGINE.md](ENGINE.md) for full architecture, eval signals, version history,
 - `make snapshot` / `make compare PREV=... [N=50]` — A/B comparison
 - Rules CLI: `go tool battlesnake` (project-scoped, never `go install`)
 
+## Iteration completion workflow
+When finishing an iteration:
+1. Run `make compare` to verify improvement
+2. Move the completed iteration section from `ROADMAP.md` to `ROADMAP_FINISHED.md`
+3. Update `ENGINE.md` — version history table, eval signals, and dead ends (if failed)
+4. Update "Current State" in both `ROADMAP.md` and this file
+5. Commit all doc changes with the iteration code
+
 ## Conventions
 - Logic package must not import main. API types convert via `coordsToLogic()`/`snakesToLogic()`.
 - Hot path must be zero-alloc. Use `CloneFromPool`/`Release`, stack arrays, `sync.Pool`.
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 
-## Current state (Iter 17)
-Phase-adaptive eval with continuous blend weights. BRS depth up to 14. Evaluate: ~1090ns/0 allocs. BRS node: ~1.1µs/0 allocs. Self-play avg ~451 turns.
+## Current state (Iter 19)
+Phase-adaptive eval with continuous blend weights. Enriched VoronoiResult with food quality, territory depth, centroids, tail reachability. BRS depth up to 14. Voronoi: ~1025ns/0 allocs. Evaluate: ~1072ns/0 allocs. BRS node: ~1.1µs/0 allocs. Self-play avg ~451 turns.
 
 ## Direction
 Search mechanics are saturated (pruning, ordering, QS all failed — see ENGINE.md dead ends). The remaining lever is **eval quality**. Next improvements should add new eval signals or refine existing weights.

@@ -129,6 +129,23 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 		}
 	}
 
+	// Self-confinement penalty.
+	switch safeMoveCount(g, me) {
+	case 0:
+		score -= 25.0
+	case 1:
+		score -= 5.0
+	}
+
+	// Tail chase bonus: reward proximity to own tail when space is tight.
+	if lateBlend > 0 {
+		tail := me.Tail()
+		tailDist := abs(myHead.X-tail.X) + abs(myHead.Y-tail.Y)
+		if tailDist > 0 {
+			score += 3.0 * lateBlend / float64(tailDist)
+		}
+	}
+
 	// Food urgency: phase-modulated threshold.
 	foodThreshold := 40 + int(15*earlyBlend)
 	if me.Health < foodThreshold && len(g.Food) > 0 {

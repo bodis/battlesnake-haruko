@@ -67,8 +67,13 @@ Multi-source BFS from all alive heads. Body segments block, tails are passable. 
 - `MyTerritory`, `OppTerritory` — cell counts
 - `MyFood`, `OppFood` — food ownership
 - `IsPartitioned` — our wavefront never met opponent's
+- `MyClosestFoodDist`, `OppClosestFoodDist` — BFS distance to nearest owned food
+- `MyFoodValue` — sum of 1/dist for owned food (cluster quality)
+- `MyTerritoryDepth` — max BFS distance in our territory
+- `MyCenterX/Y`, `OppCenterX/Y` — territory centroids
+- `MyTailReachable` — tail cell in our Voronoi territory
 
-Zero-alloc (workspace pooled). ~1050ns per call.
+Zero-alloc (workspace pooled). ~1025ns per call.
 
 ## Performance
 
@@ -96,6 +101,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 14 | Zero-alloc hot path (sync.Pool) | 56% vs v12 |
 | 16 | VoronoiResult infrastructure | (infra only) |
 | 17 | Game-phase adaptive eval | 59% vs v16, ~451 avg turns |
+| 19 | Voronoi strategic extraction | (infra only) |
 
 ## Dead Ends
 
