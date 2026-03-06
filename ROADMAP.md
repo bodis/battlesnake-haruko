@@ -2,6 +2,7 @@
 
 > Active development plan. Completed iterations are archived in [ROADMAP_FINISHED.md](ROADMAP_FINISHED.md).
 > Each iteration: implement → test → snapshot → compare → merge → move to finished → update ENGINE.md.
+> Development follows a data-driven loop: trace games → analyze outcomes → identify root causes → design targeted fixes → verify with A/B comparison.
 
 ---
 
@@ -10,94 +11,118 @@
 | Metric | Value |
 |--------|-------|
 | **Completed** | Iterations 1-20, 23 (see ROADMAP_FINISHED.md) |
-| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression — self-play symmetry) |
+| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 25 (superseded by 23) |
 | **Next** | Iteration 24 |
 | **Current** | v23 Territory bottleneck detection; BRS depth ~12-13; Evaluate ~2450ns/0 allocs; 58% vs v20 |
-| **Key insight** | Eval quality > search depth. Tarjan's AP detection adds genuinely new structural info (cell quality vs cell count) that justifies the ~2x eval cost. |
+| **Key insight** | Eval quality > search depth. But eval cost doubled in Iter 23 — next steps should extract more value from existing signals (calibration) and reclaim eval budget (phase-gating). |
 
 ---
 
-## Phase 8: Strategic Board Understanding
+## Phase 9: Optimization & Calibration
 
-> **The gap:** The current eval is a snapshot scorer — it measures "how good is this position right now"
-> but has no strategic awareness. It can't reason about food routes, spatial opportunity, resource
-> denial, or whether the current game phase demands growth vs aggression vs survival.
->
-> The Voronoi BFS already computes `owner[]` and `dist[]` for every cell but we discard most of it.
-> These iterations extract strategic signals from existing data and teach the eval to reason about
-> the whole board, not just count cells.
-
-### Iteration 21 — Positional Quality ❌ DEAD END
-
-All three signals (edge/corner penalty, territory depth adequacy, center-of-mass advantage) individually harmful (37–48%). Voronoi territory already captures positional quality implicitly. See ENGINE.md dead ends.
-
----
-
-### Iteration 22 — Opponent Pressure & Aggression Mode ❌ DEAD END
-
-Dominance score (length+territory+food composite) used to modulate H2H range, confinement weights, health pressure, directional pressure. Tested 7 variants isolating each signal (42–49%). Root cause: in self-play, both sides use the same eval, so aggression modulation gives no asymmetric advantage. The search already finds aggressive moves when they lead to better positions. See ENGINE.md dead ends.
-
----
-
-### Iteration 23 — Territory Bottleneck Detection ✅ DONE
-
-Tarjan's articulation point algorithm on territory subgraph. Detects corridor-shaped territory vulnerable to being cut off. 58% vs v20. Moved to ROADMAP_FINISHED.md.
-
----
+> **The situation:** We have 13 eval signals, most with weights set by intuition. Iter 23 doubled eval cost
+> for a strong 58% win. The next phase extracts maximum value from existing infrastructure before adding
+> new signals. Three steps: calibrate weights, reclaim eval speed, then reassess with fresh trace data.
 
 ### Iteration 24 — Weight Calibration
 
 **Status:** TODO
 **Depends on:** Iterations 20, 23
 
+**Goal:** Systematically tune all eval weights. Many were set by intuition. Iter 20 showed weights are highly sensitive (halving food strategy weights: 47% → 54%).
 
-**Goal:** Systematically tune all eval weights now that the eval has rich, meaningful signals. Many weights were set by intuition during development.
+**Weights to tune (~13):**
 
-**Weights to tune (~12-15):**
-
-| Category | Weights |
-|----------|---------|
-| Existing | wTerritory coefficients, wLen, wH2H, confinement (50/15), tail chase (3.0), food urgency (0.5) |
-| Food strategy (Iter 20) | wFoodCluster, wFoodReach, wFoodDenial, wStarvationRisk |
-| Bottleneck (Iter 23) | wBottleneck (0.3 base, phase-scaled) |
+| Category | Weights | Current |
+|----------|---------|---------|
+| Territory | wTerritory coefficients | `1.0 - 0.2×early + 0.3×late` |
+| Length | wLen | `2.0 + 1.0×early - 0.5×late` |
+| H2H pressure | wH2H | `5.0 - 2.0×late` |
+| Confinement | opp / self | 50/15 and 25/5 |
+| Tail chase | wTailChase | 3.0 |
+| Food urgency | wFoodUrgency | 0.5 |
+| Food cluster | wFoodCluster | `1.5 × early` |
+| Food reach | wFoodReach | 0.5 |
+| Food denial | wFoodDenial | 2.0 |
+| Starvation risk | wStarvationRisk | 2.5 |
+| Growth urgency | wGrowthUrgency | `0.3 × early` |
+| Bottleneck | wBottleneck | `0.3 × (0.5 + 0.5×late)` |
 
 **Approach:**
-1. One weight at a time: 2x it, 0.5x it, compare N=100 against current best
-2. Start with new signals (never tuned) — most likely to have wrong magnitudes
-3. If >55%, keep. If <50%, revert. If 50-55%, noise — skip.
-4. After individual tuning, test 2-3 "theme" combinations (e.g., all aggression weights up 50%)
-5. ~20-25 compare runs total
+1. Start with bottleneck weight (never tuned, conservative 0.3 — try 0.5, 0.2)
+2. Then food signals (known sensitive from Iter 20)
+3. Then core signals (territory, length, H2H)
+4. One weight at a time: 2× it, 0.5× it, compare N=50
+5. If >55%: keep. If <50%: revert. If 50-55%: noise, skip.
+6. After individual sweeps, test 2-3 combined adjustments
+7. ~15-20 compare runs total
 
 **Files:**
 | File | Action |
 |------|--------|
 | `logic/eval.go` | Adjust weights based on A/B results |
 
+**Verify:** Each change via `make compare N=50`. Final combined result via `make compare N=100`.
+
 ---
 
-### Iteration 25 — Territory Shape Quality (Optional)
+### Iteration 25 — Phase-Gate Bottleneck Detection
 
 **Status:** TODO
-**Depends on:** Iteration 19
+**Depends on:** Iteration 24
 
-**Goal:** Detect corridor-shaped territory (many thin cells with ≤1 owned neighbor) and penalize it. This was the original Iter 18 plan from the old roadmap.
-
-**Why optional / last:** The other iterations (20-24) target higher-impact strategic signals. Corridor detection requires an extra scan of the owner array (checking 4 neighbors per owned cell) with uncertain ROI. If Iter 20-24 already achieve strong results, this may not be worth the eval cost.
+**Goal:** Reclaim search depth by skipping Tarjan's AP detection when it adds little value. The bottleneck signal matters most in mid/late game when corridors form. In early game (open board, small snakes), territories are compact — bottlenecks don't exist yet.
 
 **Approach:**
-1. After Voronoi BFS, scan owned cells: count cells with ≤1 neighbor also owned by us ("thin cells")
-2. `corridorRatio = thinCells / myTerritory`
-3. `score -= wCorridor * corridorRatio * lateBlend` — penalize corridor shapes, more in late game
+1. Skip both Tarjan calls when `lateBlend < 0.1` (roughly: board fill < 32%, early game)
+2. Optionally skip opponent Tarjan when `OppTerritory < 12` (too small for meaningful bottleneck)
+3. Measure eval cost savings: target ~1600-1800ns average (vs 2450ns current), reclaiming 1-2 search plies for early/mid game
 
-**Risk:** If thin-cell counting adds >200ns to Voronoi, it may not be worth the eval cost. Alternatively, `MyTerritoryDepth` from Iter 19 may already capture this (deep territory ≈ compact territory).
+**Expected impact:**
+- Early game: eval drops to ~1100ns (no Tarjan), gaining ~2 extra search plies
+- Late game: eval stays at ~2450ns (Tarjan runs), keeping bottleneck awareness
+- Net effect: more depth when depth matters most (early positioning), same eval quality when eval matters most (late survival)
 
 **Files:**
 | File | Action |
 |------|--------|
-| `logic/voronoi.go` | Add thin-cell count to result loop |
-| `logic/eval.go` | Add corridor penalty |
+| `logic/voronoi.go` | Add lateBlend parameter or board-fill check before Tarjan calls |
+| `logic/eval.go` | Pass phase info or let Voronoi check board state directly |
 
-**Verify:** `make compare N=100`. If <50%, this is a dead end — note in ENGINE.md and skip.
+**Verify:** `go test -bench BenchmarkEvaluate` — target <1800ns average across game phases. `make compare N=50` — target >50% (should not hurt since early bottleneck signal was near-zero anyway).
+
+---
+
+### Iteration 26 — Trace Analysis & Late-Game Survival (Conditional)
+
+**Status:** TODO (data-driven — trace first, design second)
+**Depends on:** Iterations 24, 25
+
+**Goal:** Run fresh trace analysis on the calibrated v24/v25 engine to identify remaining death patterns. Iter 23's bottleneck detection may have shifted the death distribution. Design targeted fixes only if trace data shows a clear, addressable root cause.
+
+**Step 1: Trace & analyze**
+```
+make trace N=20
+make analyze MODE=deaths
+make analyze MODE=signals
+make analyze MODE=turning-points
+```
+
+**Candidate signals (only if trace data supports them):**
+
+1. **Space-to-length ratio**: `MyTerritory / me.Length`. Below 1.5× = danger, below 1.0× = critical. Gate by `lateBlend`.
+2. **Partition food planning**: When `IsPartitioned`, food in our territory becomes survival-critical. Bonus/penalty based on food count vs health.
+3. **Opponent space crisis**: If opponent's space ratio is worse than ours, we're likely to outlast them. Bonus.
+
+**Decision criteria:** Only implement if trace analysis shows >30% of losses have a clear signal gap that these candidates would address. Otherwise, mark as "no clear target" and focus on other approaches (e.g., opening book, endgame tablebase, or multi-opponent support).
+
+**Files:**
+| File | Action |
+|------|--------|
+| `logic/eval.go` | Add late-game signals (if trace data supports) |
+| `logic/eval_test.go` | Tests for new signals |
+
+**Verify:** `make compare N=50` — target >53%.
 
 ---
 
@@ -113,4 +138,5 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | 22 | — | — | ❌ Dead end (42–49%) |
 | 23 | `snapshots/haruko-0e6fdda` | ~287-350 | Territory bottleneck detection; 58% vs v20 |
 | 24 | | | Weight calibration |
-| 25 | | | Territory shape quality (optional) |
+| 25 | | | Phase-gate bottleneck detection |
+| 26 | | | Late-game survival (conditional on trace data) |

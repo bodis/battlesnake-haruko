@@ -403,3 +403,30 @@ Every past win came from deeper search or better eval. Search mechanics (pruning
 **Cost:** Voronoi ~2400ns (was ~1025ns), Evaluate ~2450ns (was ~1130ns), BRS node ~2490ns (was ~1180ns). Zero allocations. Roughly halves effective search depth (~12-13 from ~14), but eval improvement more than compensates.
 
 **Result:** 58% vs v20 (two independent N=50 runs both at 58%). ~287-350 avg turns.
+
+---
+
+### Iteration 21 — Positional Quality ❌ DEAD END
+
+**Status:** DEAD END
+**Depends on:** Iteration 19
+
+All three signals (edge/corner penalty, territory depth adequacy, center-of-mass advantage) individually harmful (37–48%). Voronoi territory already captures positional quality implicitly — center positions get more territory, edge positions get less. Explicit positional signals double-count and confuse BRS. Tried halving weights (48%), individual isolation (37–45%), normalized center (43%). All negative. See ENGINE.md dead ends.
+
+---
+
+### Iteration 22 — Opponent Pressure & Aggression Mode ❌ DEAD END
+
+**Status:** DEAD END
+**Depends on:** Iteration 19
+
+Dominance score (length+territory+food composite) used to modulate H2H range, confinement weights, health pressure, directional pressure. Tested 7 variants isolating each signal (42–49%). Root cause: in self-play, both sides use the same eval, so aggression modulation gives no asymmetric advantage. The search already finds aggressive moves when they lead to better positions. See ENGINE.md dead ends.
+
+---
+
+### Iteration 25 — Territory Shape Quality ❌ SUPERSEDED
+
+**Status:** SUPERSEDED by Iteration 23
+**Depends on:** Iteration 19
+
+Original plan: detect corridor-shaped territory via thin-cell counting (cells with ≤1 owned neighbor). Iter 23's Tarjan AP detection captures the dangerous case directly — corridor territory that can be severed by opponent moves. Thin-cell counting would add a softer, redundant version of the same signal at additional eval cost. Skipped.
