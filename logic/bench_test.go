@@ -54,9 +54,37 @@ func BenchmarkVoronoi(b *testing.B) {
 	b.ResetTimer()
 	var vr VoronoiResult
 	for i := 0; i < b.N; i++ {
-		vr = VoronoiTerritory(g, 0)
+		vr = VoronoiTerritory(g, 0, false)
 	}
 	_ = vr
+}
+
+func BenchmarkVoronoiNoBottleneck(b *testing.B) {
+	g := standardBenchGame()
+	b.ResetTimer()
+	var vr VoronoiResult
+	for i := 0; i < b.N; i++ {
+		vr = VoronoiTerritory(g, 0, true)
+	}
+	_ = vr
+}
+
+func BenchmarkEvaluateLateGame(b *testing.B) {
+	// Late-game scenario: long snakes filling >30% of board to trigger Tarjan.
+	body0 := make([]Coord, 20)
+	body1 := make([]Coord, 20)
+	for i := range body0 {
+		body0[i] = Coord{i % 11, i / 11}
+		body1[i] = Coord{10 - i%11, 10 - i/11}
+	}
+	g := NewGameSim(11, 11, []SimSnake{
+		{ID: "me", Body: body0, Health: 100, Length: 20},
+		{ID: "opp", Body: body1, Health: 100, Length: 20},
+	}, []Coord{{5, 5}}, nil)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		Evaluate(g, 0)
+	}
 }
 
 func BenchmarkBRSNode(b *testing.B) {

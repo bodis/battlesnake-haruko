@@ -80,7 +80,7 @@ Multi-source BFS from all alive heads. Body segments block, tails are passable. 
 - `MyTailReachable` — tail cell in our Voronoi territory
 - `MyThreatenedTerritory`, `OppThreatenedTerritory` — cells behind live articulation points (Tarjan's)
 
-Zero-alloc (workspace pooled). ~2400ns per call (includes Tarjan's bottleneck detection).
+Zero-alloc (workspace pooled). ~2400ns per call with bottleneck detection, ~1050ns without. Bottleneck detection (Tarjan's AP) is phase-gated: skipped when `lateBlend < 0.1` (board fill < 32%) to recover search depth in early game.
 
 ## Performance
 
@@ -98,8 +98,9 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 |-----------|------|--------|
 | CloneFromPool | 19ns | 0 |
 | Step | 49ns | 0 |
-| Evaluate | ~2450ns | 0 |
-| BRS node (Clone+Step+Eval) | ~2490ns | 0 |
+| Evaluate (early game) | ~1116ns | 0 |
+| Evaluate (late game) | ~2450ns | 0 |
+| BRS node (Clone+Step+Eval) | ~1185ns early / ~2490ns late | 0 |
 
 ## Version History
 
@@ -121,6 +122,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 23 | Territory bottleneck detection (Tarjan's AP) | 58% vs v20 |
 | 24 | Weight calibration (6/12 weights improved) | 61% vs v23 |
 | 25 | Win/loss trace analysis | (analysis only, no code change) |
+| 26 | Phase-gate bottleneck detection | 67% vs v24, ~316 avg turns |
 
 ## Dead Ends
 
@@ -173,3 +175,6 @@ Both sides share the same eval, so dynamic modulation (aggression, dominance sca
 
 ### Territory decides everything (Iter 25 analysis)
 100% of wins are territory-squeeze. Games are decided by sudden 1-2 turn territory flips (200+ eval swing). The winner often has a territory *disadvantage* for most of the game, then wins via a sudden confinement kill. LenAdvantage is the strongest differentiator between wins and losses (not territory). Deaths are 50% collision, 25% wall-collision, evenly split between mid-game and late-game. Implication: more search depth to foresee territory flips is the next lever.
+
+### Phase-gating eval cost for depth (Iter 26)
+Skipping Tarjan's AP in early game (`lateBlend < 0.1`) recovers 57% of Voronoi cost (2414ns → 1051ns), translating to ~2 extra search plies. Result: 67% vs v24 — the strongest single-iteration improvement since Iter 8. The skipped signal contributes at most ~1.65 eval points at the threshold — well below noise floor. This confirms that early-game search depth is critical: the engine needs to see territory flips coming, and cheaper eval = more depth = better foresight.

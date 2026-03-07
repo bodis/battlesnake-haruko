@@ -14,7 +14,7 @@ func TestVoronoiSymmetricBoard(t *testing.T) {
 			{ID: "b", Body: []Coord{{10, 10}, {9, 10}, {8, 10}}, Health: 100, Length: 3},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyTerritory == 0 || vr.OppTerritory == 0 {
 		t.Fatalf("expected non-zero territory, got my=%d opp=%d", vr.MyTerritory, vr.OppTerritory)
 	}
@@ -36,7 +36,7 @@ func TestVoronoiCorneredSnake(t *testing.T) {
 			{ID: "b", Body: []Coord{{5, 5}, {5, 4}, {5, 3}}, Health: 100, Length: 3},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyTerritory >= vr.OppTerritory {
 		t.Errorf("cornered snake should have less territory: my=%d opp=%d", vr.MyTerritory, vr.OppTerritory)
 	}
@@ -51,7 +51,7 @@ func TestVoronoiBodyWallPartition(t *testing.T) {
 			{ID: "b", Body: []Coord{{5, 2}, {2, 4}, {2, 3}, {2, 2}, {2, 1}, {2, 0}, {3, 0}}, Health: 100, Length: 7},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyTerritory >= vr.OppTerritory {
 		t.Errorf("wall-partitioned snake should have less territory: my=%d opp=%d", vr.MyTerritory, vr.OppTerritory)
 	}
@@ -66,7 +66,7 @@ func TestVoronoiDeadSnakeIgnored(t *testing.T) {
 			{ID: "b", Body: []Coord{{4, 4}, {3, 4}}, Health: 0, Length: 2, EliminatedCause: "starvation"},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.OppTerritory != 0 {
 		t.Errorf("dead snake should claim no territory, got opp=%d", vr.OppTerritory)
 	}
@@ -83,7 +83,7 @@ func TestVoronoiSingleSnake(t *testing.T) {
 			{ID: "a", Body: []Coord{{2, 2}, {2, 1}, {2, 0}}, Health: 100, Length: 3},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyTerritory != 24 {
 		t.Errorf("single snake should claim 24 cells (25 - 1 body), got my=%d", vr.MyTerritory)
 	}
@@ -102,7 +102,7 @@ func TestVoronoiResult_FoodInMyTerritory(t *testing.T) {
 		},
 		Food: []Coord{{0, 0}, {2, 2}}, // close to snake a
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyFood != 2 {
 		t.Errorf("expected MyFood=2, got %d", vr.MyFood)
 	}
@@ -121,7 +121,7 @@ func TestVoronoiResult_FoodInOppTerritory(t *testing.T) {
 		},
 		Food: []Coord{{10, 10}, {8, 8}}, // close to snake b
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyFood != 0 {
 		t.Errorf("expected MyFood=0, got %d", vr.MyFood)
 	}
@@ -141,7 +141,7 @@ func TestVoronoiResult_FoodOnFrontier(t *testing.T) {
 		},
 		Food: []Coord{{2, 0}}, // equidistant → tied → neither claims
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyFood != 0 {
 		t.Errorf("frontier food should not count as ours: MyFood=%d", vr.MyFood)
 	}
@@ -161,7 +161,7 @@ func TestVoronoiResult_Partitioned(t *testing.T) {
 			{ID: "b", Body: []Coord{{4, 1}, {2, 0}, {2, 1}, {2, 2}, {3, 2}, {4, 2}}, Health: 100, Length: 6},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if !vr.IsPartitioned {
 		t.Error("expected IsPartitioned=true when body wall separates snakes")
 	}
@@ -176,7 +176,7 @@ func TestVoronoiResult_NotPartitioned(t *testing.T) {
 			{ID: "b", Body: []Coord{{10, 10}, {9, 10}}, Health: 100, Length: 2},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.IsPartitioned {
 		t.Error("expected IsPartitioned=false on open board")
 	}
@@ -190,7 +190,7 @@ func TestVoronoiResult_SingleSnakeNotPartitioned(t *testing.T) {
 			{ID: "a", Body: []Coord{{2, 2}}, Health: 100, Length: 1},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.IsPartitioned {
 		t.Error("expected IsPartitioned=false with single snake")
 	}
@@ -207,7 +207,7 @@ func TestVoronoiResult_FoodDistances(t *testing.T) {
 		},
 		Food: []Coord{{2, 0}, {8, 10}},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyClosestFoodDist != 2 {
 		t.Errorf("expected MyClosestFoodDist=2, got %d", vr.MyClosestFoodDist)
 	}
@@ -231,7 +231,7 @@ func TestVoronoiResult_FoodValueMultiple(t *testing.T) {
 		},
 		Food: []Coord{{0, 1}, {3, 0}}, // dist 1 and dist 3 from head (0,0)
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyFood != 2 {
 		t.Errorf("expected MyFood=2, got %d", vr.MyFood)
 	}
@@ -254,7 +254,7 @@ func TestVoronoiResult_NoFoodZeroValues(t *testing.T) {
 			{ID: "b", Body: []Coord{{10, 10}, {9, 10}}, Health: 100, Length: 2},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyClosestFoodDist != 0 {
 		t.Errorf("expected MyClosestFoodDist=0, got %d", vr.MyClosestFoodDist)
 	}
@@ -275,7 +275,7 @@ func TestVoronoiResult_TerritoryDepth(t *testing.T) {
 			{ID: "b", Body: []Coord{{10, 10}, {9, 10}}, Health: 100, Length: 2},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyTerritoryDepth <= 0 {
 		t.Errorf("expected MyTerritoryDepth > 0, got %d", vr.MyTerritoryDepth)
 	}
@@ -291,7 +291,7 @@ func TestVoronoiResult_CentroidSymmetric(t *testing.T) {
 			{ID: "b", Body: []Coord{{10, 10}, {9, 10}}, Health: 100, Length: 2},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	// Centroids should be roughly mirror images across the center (5,5).
 	sumX := vr.MyCenterX + vr.OppCenterX
 	sumY := vr.MyCenterY + vr.OppCenterY
@@ -313,7 +313,7 @@ func TestVoronoiResult_TailReachable(t *testing.T) {
 			{ID: "b", Body: []Coord{{9, 9}, {9, 10}}, Health: 100, Length: 2},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if !vr.MyTailReachable {
 		t.Error("expected MyTailReachable=true when tail is in own territory")
 	}
@@ -329,7 +329,7 @@ func TestVoronoiResult_TailNotReachable(t *testing.T) {
 			{ID: "b", Body: []Coord{{3, 3}, {3, 2}}, Health: 100, Length: 2},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyTailReachable {
 		t.Error("expected MyTailReachable=false when tail is in opponent territory")
 	}
@@ -356,7 +356,7 @@ func TestVoronoiResult_BottleneckCorridor(t *testing.T) {
 			{ID: "b", Body: []Coord{{5, 3}, {2, 3}, {3, 3}, {4, 3}, {5, 1}, {4, 1}, {3, 1}, {2, 1}, {5, 2}}, Health: 100, Length: 9},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyThreatenedTerritory == 0 {
 		t.Error("expected MyThreatenedTerritory > 0 for corridor territory")
 	}
@@ -372,7 +372,7 @@ func TestVoronoiResult_BottleneckCompact(t *testing.T) {
 			{ID: "b", Body: []Coord{{9, 9}, {9, 10}}, Health: 100, Length: 2},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyThreatenedTerritory != 0 {
 		t.Errorf("expected MyThreatenedTerritory=0 for compact territory, got %d", vr.MyThreatenedTerritory)
 	}
@@ -389,7 +389,7 @@ func TestVoronoiResult_BottleneckOpponent(t *testing.T) {
 		},
 	}
 	// myIdx=0 is the snake with the body wall, opponent (idx=1) has corridor
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.OppThreatenedTerritory == 0 {
 		t.Error("expected OppThreatenedTerritory > 0 for opponent corridor")
 	}
@@ -405,7 +405,7 @@ func TestVoronoiResult_BottleneckInternalAPIgnored(t *testing.T) {
 			{ID: "a", Body: []Coord{{2, 2}, {2, 1}}, Health: 100, Length: 2},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyThreatenedTerritory != 0 {
 		t.Errorf("expected MyThreatenedTerritory=0 for single snake (no live APs), got %d",
 			vr.MyThreatenedTerritory)
@@ -422,7 +422,7 @@ func TestVoronoiResult_BottleneckSmallTerritory(t *testing.T) {
 			{ID: "b", Body: []Coord{{4, 1}, {2, 0}, {2, 1}, {2, 2}, {3, 2}, {4, 2}}, Health: 100, Length: 6},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	// Snake A's territory is ~5 cells (left side of partition) — too small for bottleneck.
 	if vr.MyThreatenedTerritory != 0 {
 		t.Errorf("expected MyThreatenedTerritory=0 for small territory (<8), got %d",
@@ -441,7 +441,7 @@ func TestVoronoiResult_19x19Board(t *testing.T) {
 		},
 		Food: []Coord{{9, 9}},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyTerritory == 0 || vr.OppTerritory == 0 {
 		t.Errorf("expected non-zero territory on 19x19, got my=%d opp=%d", vr.MyTerritory, vr.OppTerritory)
 	}
@@ -461,7 +461,7 @@ func TestVoronoiResult_7x7Board(t *testing.T) {
 			{ID: "b", Body: []Coord{{5, 5}, {5, 6}}, Health: 100, Length: 2},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	if vr.MyTerritory == 0 || vr.OppTerritory == 0 {
 		t.Errorf("expected non-zero territory on 7x7, got my=%d opp=%d", vr.MyTerritory, vr.OppTerritory)
 	}
@@ -475,7 +475,7 @@ func TestVoronoiResult_SingleSnakeDepthAndCentroid(t *testing.T) {
 			{ID: "a", Body: []Coord{{2, 2}, {2, 1}, {2, 0}}, Health: 100, Length: 3},
 		},
 	}
-	vr := VoronoiTerritory(g, 0)
+	vr := VoronoiTerritory(g, 0, false)
 	// Max depth from center: corners are at Manhattan dist 4 (e.g., (0,0) from (2,2)).
 	if vr.MyTerritoryDepth < 4 {
 		t.Errorf("expected MyTerritoryDepth >= 4, got %d", vr.MyTerritoryDepth)

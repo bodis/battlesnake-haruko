@@ -474,7 +474,7 @@ func TestEval_BottleneckPenalty(t *testing.T) {
 	}
 
 	// Verify the VoronoiResult correctly identifies our threatened territory.
-	vr := VoronoiTerritory(gCorridor, 0)
+	vr := VoronoiTerritory(gCorridor, 0, false)
 	if vr.MyThreatenedTerritory == 0 {
 		t.Error("corridor: expected MyThreatenedTerritory > 0")
 	}

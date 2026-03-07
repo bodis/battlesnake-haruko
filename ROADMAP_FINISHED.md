@@ -467,7 +467,51 @@ Dominance score (length+territory+food composite) used to modulate H2H range, co
 
 ---
 
-### Iteration 25 — Territory Shape Quality ❌ SUPERSEDED
+### Iteration 25 — Win/Loss Trace Analysis
+
+**Status:** DONE
+**Depends on:** Iteration 24
+
+**Goal:** Comprehensive analysis of v24's game outcomes to guide next iteration.
+
+**Findings (N=20 self-play games, 40 traces):**
+
+1. **Win classification: 100% territory-squeeze.** No h2h-kills or starvation-kills.
+2. **Death causes:** collision=50%, wall-collision=25%, body-collision=10%, starvation=10%.
+3. **Death phase:** early=1, mid=9, late=10 (roughly even mid/late).
+4. **Games decided by sudden 1-2 turn territory flips** (200+ eval swing) — beyond BRS horizon.
+5. **LenAdvantage is the strongest win/loss differentiator** (not territory).
+6. **OppConfinement is the kill signal** — jumps to +50 1-2 turns before victory.
+
+**Synthesis:** More search depth to foresee territory flips is the next lever. Led to Iter 26.
+
+---
+
+### Iteration 26 — Phase-Gate Bottleneck Detection
+
+**Status:** DONE
+**Depends on:** Iterations 23, 25
+
+**Goal:** Skip Tarjan's AP detection in early game (`lateBlend < 0.1`) to reclaim eval cost as extra search depth.
+
+**What was built:**
+- Added `skipBottleneck bool` parameter to `VoronoiTerritory`
+- `Evaluate` passes `lateBlend < 0.1` — skips bottleneck when board fill < 32%
+- `EvaluateDetailed` and trace always run full Tarjan (diagnostic data)
+- New benchmarks: `BenchmarkVoronoiNoBottleneck`, `BenchmarkEvaluateLateGame`
+
+**Performance:**
+- Voronoi: 2414ns → 1051ns without bottleneck (57% faster)
+- Early-game Evaluate: ~2450ns → ~1116ns (54% faster)
+- Late-game Evaluate unchanged (Tarjan still runs when lateBlend ≥ 0.1)
+
+**Risk:** Minimal. At `lateBlend=0.1`, bottleneck weight is only 0.15 — contributes at most ~1.65 eval points. Well below noise floor.
+
+**Result:** 67% vs v24 (N=100). ~316 avg turns. Strongest single-iteration improvement since Iter 8 (88%).
+
+---
+
+### Iteration 25 (original) — Territory Shape Quality ❌ SUPERSEDED
 
 **Status:** SUPERSEDED by Iteration 23
 **Depends on:** Iteration 19

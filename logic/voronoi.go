@@ -234,7 +234,7 @@ func (ws *voronoiWorkspace) findThreatenedTerritory(tag int8, rootCell int16, te
 // VoronoiTerritory performs a multi-source BFS from all alive snake heads
 // and returns territory counts, food ownership, and partition status.
 // Cells reached by two snakes in the same BFS layer are unclaimed (ties).
-func VoronoiTerritory(g *GameSim, myIdx int) VoronoiResult {
+func VoronoiTerritory(g *GameSim, myIdx int, skipBottleneck bool) VoronoiResult {
 	size := g.Width * g.Height
 
 	ws := voronoiPool.Get().(*voronoiWorkspace)
@@ -401,17 +401,19 @@ func VoronoiTerritory(g *GameSim, myIdx int) VoronoiResult {
 	}
 
 	// Bottleneck detection: find threatened territory behind articulation points.
-	myHead := me.Head()
-	myRootCell := int16(myHead.Y*g.Width + myHead.X)
-	result.MyThreatenedTerritory = ws.findThreatenedTerritory(myTag, myRootCell, result.MyTerritory, size, g.Width)
-	// Find first alive opponent for opponent bottleneck.
-	for i := range g.Snakes {
-		if i != myIdx && g.Snakes[i].IsAlive() {
-			oppTag := int8(i + 1)
-			oppHead := g.Snakes[i].Head()
-			oppRootCell := int16(oppHead.Y*g.Width + oppHead.X)
-			result.OppThreatenedTerritory = ws.findThreatenedTerritory(oppTag, oppRootCell, result.OppTerritory, size, g.Width)
-			break
+	if !skipBottleneck {
+		myHead := me.Head()
+		myRootCell := int16(myHead.Y*g.Width + myHead.X)
+		result.MyThreatenedTerritory = ws.findThreatenedTerritory(myTag, myRootCell, result.MyTerritory, size, g.Width)
+		// Find first alive opponent for opponent bottleneck.
+		for i := range g.Snakes {
+			if i != myIdx && g.Snakes[i].IsAlive() {
+				oppTag := int8(i + 1)
+				oppHead := g.Snakes[i].Head()
+				oppRootCell := int16(oppHead.Y*g.Width + oppHead.X)
+				result.OppThreatenedTerritory = ws.findThreatenedTerritory(oppTag, oppRootCell, result.OppTerritory, size, g.Width)
+				break
+			}
 		}
 	}
 

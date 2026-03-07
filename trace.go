@@ -111,7 +111,7 @@ func traceTurn(gameID, snakeID string, state GameState, sim *logic.GameSim, move
 	}
 
 	bd := logic.EvaluateDetailed(sim, myIdx)
-	vr := logic.VoronoiTerritory(sim, myIdx)
+	vr := logic.VoronoiTerritory(sim, myIdx, false)
 
 	oppLen := 0
 	for i := range sim.Snakes {

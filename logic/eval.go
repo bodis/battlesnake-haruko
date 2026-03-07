@@ -84,7 +84,7 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 	lateBlend := clamp01((boardFill - 0.30) / 0.20) // 0.0@30%, 1.0@50%+
 
 	// Territory score with phase modulation.
-	vr := VoronoiTerritory(g, myIdx)
+	vr := VoronoiTerritory(g, myIdx, lateBlend < 0.1)
 	if vr.IsPartitioned && lateBlend < 0.5 {
 		lateBlend = 0.5
 	}
@@ -260,7 +260,7 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 	boardFill := float64(totalBody) / float64(g.Width*g.Height)
 	lateBlend := clamp01((boardFill - 0.30) / 0.20)
 
-	vr := VoronoiTerritory(g, myIdx)
+	vr := VoronoiTerritory(g, myIdx, false)
 	if vr.IsPartitioned && lateBlend < 0.5 {
 		lateBlend = 0.5
 	}
