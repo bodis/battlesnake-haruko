@@ -34,11 +34,11 @@ When finishing an iteration:
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 - Board sizes: 7x7, 11x11, 19x19 all supported. `maxBoardCells=361`. Loops use `Width*Height`, no 11x11 cost.
 
-## Current state (Iter 24, Iter 21+22 dead ends)
-Weight calibration: 6/12 weights improved. Territory 1.0→1.5, Length 2.0→3.0, H2H 5.0→8.0, TailChase 3.0→5.0, StarvationRisk 2.5→1.5, FoodCluster 1.5→1.0. BRS depth ~12-13. Evaluate: ~2450ns/0 allocs. 61% vs v23.
+## Current state (Iter 25, Iter 21+22 dead ends)
+Weight calibration: 6/12 weights improved. Territory 1.0→1.5, Length 2.0→3.0, H2H 5.0→8.0, TailChase 3.0→5.0, StarvationRisk 2.5→1.5, FoodCluster 1.5→1.0. BRS depth ~12-13. Evaluate: ~2450ns/0 allocs. 61% vs v23. Trace analysis (Iter 25): 100% wins are territory-squeeze, games decided by sudden 1-2 turn territory flips.
 
 ## Direction
-Trace analysis first (Iter 25): understand v24's win/loss patterns before deciding next code change. Analyze both deaths (how we die) and wins (how opponent dies, turning points, self-destructs vs active kills).
+Phase-gate bottleneck detection: skip Tarjan's AP in early game (lateBlend < 0.1) to reclaim ~2 search plies. Territory flips are beyond current BRS horizon — more depth is the next lever.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.

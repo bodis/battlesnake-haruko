@@ -120,6 +120,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 20 | Food strategy signals | 54% vs v19, ~443 avg turns |
 | 23 | Territory bottleneck detection (Tarjan's AP) | 58% vs v20 |
 | 24 | Weight calibration (6/12 weights improved) | 61% vs v23 |
+| 25 | Win/loss trace analysis | (analysis only, no code change) |
 
 ## Dead Ends
 
@@ -169,3 +170,6 @@ Pruning (LMR, NMP), ordering (heuristic), and extensions (QS) all ≤51%. BRS al
 
 ### Self-play limitations (Iter 22)
 Both sides share the same eval, so dynamic modulation (aggression, dominance scaling) gives no asymmetric advantage. Static weight tuning works because it improves absolute position assessment.
+
+### Territory decides everything (Iter 25 analysis)
+100% of wins are territory-squeeze. Games are decided by sudden 1-2 turn territory flips (200+ eval swing). The winner often has a territory *disadvantage* for most of the game, then wins via a sudden confinement kill. LenAdvantage is the strongest differentiator between wins and losses (not territory). Deaths are 50% collision, 25% wall-collision, evenly split between mid-game and late-game. Implication: more search depth to foresee territory flips is the next lever.

@@ -10,11 +10,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iterations 1-20, 23-24 (see ROADMAP_FINISHED.md) |
-| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 25 (superseded by 23) |
-| **Next** | Iteration 25 |
+| **Completed** | Iterations 1-20, 23-25 (see ROADMAP_FINISHED.md for 1-20, 23-24) |
+| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression) |
+| **Next** | Iteration 26 (phase-gate bottleneck detection) |
 | **Current** | v24 Weight calibration; BRS depth ~12-13; Evaluate ~2450ns/0 allocs; 61% vs v23 |
-| **Key insight** | After weight calibration, the engine's death/win patterns may have shifted. Before adding new features or optimizations, we need fresh data to guide the next move. |
+| **Key insight** | 100% of wins are territory-squeeze. Games decided by sudden 1-2 turn territory flips (200+ eval swing). More depth to foresee these flips is the next lever. |
 
 ---
 
@@ -27,79 +27,31 @@
 
 ### Iteration 25 — Win/Loss Trace Analysis
 
-**Status:** TODO
+**Status:** DONE
 **Depends on:** Iteration 24
 
-**Goal:** Comprehensive analysis of v24's game outcomes — both losses AND wins. Understand not just how we die, but how we win: what signals drive our victories, what opponent mistakes we exploit, and where our turning points happen. This informs whether the next iteration should be eval speed (phase-gating), new signals, or something else entirely.
+**Goal:** Comprehensive analysis of v24's game outcomes to guide next iteration.
 
-**Step 1: Collect trace data**
-```
-rm -f traces/*.jsonl        # clear old traces
-make trace N=20             # self-play with full eval tracing
-```
+**Findings (N=20 self-play games, 40 traces):**
 
-Note: self-play traces capture BOTH perspectives (we play both sides), so N=20 games = 40 trace files. Each game has a winner and loser from both perspectives.
+1. **Win classification: 100% territory-squeeze.** No h2h-kills or starvation-kills. Territory is the only mechanism that wins games.
 
-**Step 2: Loss analysis — how do we die?**
-```
-make analyze MODE=summary           # overall win/loss/draw + death causes
-make analyze MODE=deaths -top 20    # detailed last-10-turns for each loss
-make analyze MODE=turning-points    # largest eval swings (negative = our collapse)
-```
+2. **Death causes:** collision=10 (50%), wall-collision=5 (25%), body-collision=2 (10%), starvation=2 (10%), head-collision=1 (5%). Collisions dominate — snakes are dying by running into things, not starving.
 
-Questions to answer:
-- **Death cause distribution**: starvation vs head-collision vs body-collision vs wall? Which dominates?
-- **Death phase**: do we die early (turn <50), mid (50-200), or late (200+)? Early deaths suggest opening weakness; late deaths suggest endgame weakness.
-- **Pre-death pattern**: what signal collapses before death? Territory drop (getting cornered)? H2H loss (losing head-to-head)? Starvation (failing to find food)?
-- **Preventability**: was there a turning point where eval swung negative? How many turns before death? Could deeper search have seen it?
+3. **Death phase:** early(<50)=1, mid(50-200)=9, late(>200)=10. Roughly even mid/late — no single phase is weak.
 
-**Step 3: Win analysis — how does the opponent die?**
-```
-make analyze MODE=signals           # signal averages in wins vs losses
-make analyze MODE=turning-points    # largest eval swings (positive = our breakthrough)
-```
+4. **Territory drives everything.** In every loss analyzed, the largest signal drop was territory (drops of 30–173 over last 10 turns). In wins, territory swings of +100-175 precede victory. Games are decided by sudden 1-2 turn territory flips.
 
-Add a new `wins` analysis mode to `cmd/analyze/main.go`:
-```
-make analyze MODE=wins -top 20      # detailed last-10-turns before opponent dies
-```
+5. **Eval swings are sudden and massive.** Typical pattern: eval goes from +20 to -190 in one turn (or vice versa). This means the search can't see these territory flips coming — they're beyond BRS horizon.
 
-Questions to answer:
-- **Win cause distribution**: do we kill opponents via territory strangulation, H2H domination, or do they self-destruct (walk into walls/bodies)?
-- **Win phase**: early kills (aggressive H2H) vs late kills (territory squeeze)?
-- **Winning signals**: which eval signals are strongest in wins but weakest in losses? These are our most effective weapons.
-- **Opponent self-destruction**: how often does the opponent lose without us doing anything special? (e.g., opponent walks into our body, opponent starves in open space) — these wins don't teach us anything, but filtering them out shows our "real" win rate.
-- **Turning points in wins**: when does the eval swing positive? What signal drives it? This shows our strategic "moment of advantage".
+6. **Signals analysis (wins vs losses avg):** Territory=-1.07 in wins, +0.61 in losses. LenAdvantage=+0.12 in wins, -0.95 in losses. This is counterintuitive — the winner often had a territory *disadvantage* for most of the game, then won via a sudden flip. LenAdvantage is the strongest differentiator between wins and losses.
 
-**Step 4: Synthesize findings**
+7. **OppConfinement is the kill signal.** Most wins show confinement jumping to +50 (0 safe moves) 1-2 turns before victory. Territory squeezes create confinement which creates the kill.
 
-Classify outcomes into actionable categories:
-1. **Fixable losses** — deaths where a clear eval signal gap exists (territory collapse we didn't see, starvation we could've avoided)
-2. **Unavoidable losses** — opponent played better, no signal gap (these set our ceiling)
-3. **Active wins** — we created advantage through territory/H2H/food control
-4. **Passive wins** — opponent self-destructed (wall, starvation, bad move)
-
-Based on the distribution, decide next iteration:
-- If >30% of losses have a fixable signal gap → new eval signal targeting that gap
-- If losses are mostly unavoidable + wins are mostly active → phase-gate bottleneck (Iter 25-old) to get more depth
-- If many wins are passive (opponent self-destructs) → our self-play winrate overstates real strength; consider testing against external opponents
-- If a specific death phase dominates → target that phase (early: opening, late: endgame)
-
-**Step 5: Build `wins` analysis mode**
-
-Add `modeWins` to `cmd/analyze/main.go` — mirror of `modeDeaths` but for wins:
-- Show last 10 turns before opponent death
-- Track which signal was highest at the moment of victory
-- Classify wins: "territory squeeze" (territory signal dominant), "H2H kill" (H2H + confinement dominant), "starvation kill" (food denial dominant), "self-destruct" (our eval was flat/negative before opponent died)
-
-**Files:**
-| File | Action |
-|------|--------|
-| `cmd/analyze/main.go` | Add `wins` mode, enhance `summary` with phase breakdown |
-| `ROADMAP.md` | Document findings, decide next iteration |
-| `ENGINE.md` | Update with analysis insights |
-
-**Verify:** Qualitative — findings should clearly point to a next iteration, or confirm we're at a local optimum.
+**Synthesis:**
+- Losses are NOT due to eval gaps — both sides have the same eval. The deciding factor is who gets caught in a sudden territory flip.
+- The sudden territory flips (200+ eval swing in 1 turn) suggest the engine can't foresee these positional crises far enough in advance.
+- **Next iteration direction: phase-gate bottleneck detection.** Since all games are decided by territory and the engine already has strong territory eval, the best lever is getting more search depth to see territory flips earlier. Skip Tarjan's AP in early game to reclaim ~2 plies.
 
 ---
 

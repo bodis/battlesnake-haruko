@@ -95,21 +95,68 @@ func loadGames(files []string) []game {
 	return games
 }
 
+func classifyWin(g game) string {
+	// Check self-destruct: avg eval over last 5 turns < 5.0
+	if len(g.turns) > 0 {
+		start := len(g.turns) - 5
+		if start < 0 {
+			start = 0
+		}
+		sum := 0.0
+		for _, t := range g.turns[start:] {
+			sum += t.Eval
+		}
+		avg := sum / float64(len(g.turns[start:]))
+		if avg < 5.0 {
+			return "self-destruct"
+		}
+	}
+
+	// Find dominant signal group at final turn.
+	if len(g.turns) == 0 {
+		return "unknown"
+	}
+	last := g.turns[len(g.turns)-1]
+
+	territoryGroup := math.Abs(last.Territory) + math.Abs(last.OppConfinement)
+	h2hGroup := math.Abs(last.H2H)
+	starvGroup := math.Abs(last.FoodDenial) + math.Abs(last.FoodReach) + math.Abs(last.StarvationRisk)
+
+	if territoryGroup >= h2hGroup && territoryGroup >= starvGroup {
+		return "territory-squeeze"
+	}
+	if h2hGroup >= territoryGroup && h2hGroup >= starvGroup {
+		return "h2h-kill"
+	}
+	return "starvation-kill"
+}
+
 func modeSummary(games []game) {
 	wins, losses, draws := 0, 0, 0
 	deathCounts := map[string]int{}
 	var winTurns, lossTurns []int
+	earlyDeaths, midDeaths, lateDeaths := 0, 0, 0
+	winClassCounts := map[string]int{}
 
 	for _, g := range games {
 		switch g.footer.Result {
 		case "win":
 			wins++
 			winTurns = append(winTurns, g.footer.TotalTurns)
+			winClassCounts[classifyWin(g)]++
 		case "loss":
 			losses++
 			lossTurns = append(lossTurns, g.footer.TotalTurns)
 			if g.footer.DeathCause != "" {
 				deathCounts[g.footer.DeathCause]++
+			}
+			switch {
+			case g.footer.TotalTurns < 50:
+				earlyDeaths++
+			case g.footer.TotalTurns <= 200:
+				midDeaths++
+			default:
+				lateDeaths++
 			}
 		case "draw":
 			draws++
@@ -158,6 +205,19 @@ func modeSummary(games []game) {
 		fmt.Printf("Deaths:")
 		for cause, count := range deathCounts {
 			fmt.Printf(" %s=%d", cause, count)
+		}
+		fmt.Println()
+	}
+
+	if losses > 0 {
+		fmt.Printf("Death phase: early(<50)=%d  mid(50-200)=%d  late(>200)=%d\n",
+			earlyDeaths, midDeaths, lateDeaths)
+	}
+
+	if wins > 0 {
+		fmt.Printf("Win types:")
+		for class, count := range winClassCounts {
+			fmt.Printf(" %s=%d", class, count)
 		}
 		fmt.Println()
 	}
@@ -344,6 +404,89 @@ func modeDeaths(games []game, top int) {
 	}
 }
 
+func modeWins(games []game, top int) {
+	classCounts := map[string]int{}
+	count := 0
+	for _, g := range games {
+		if g.footer.Result != "win" || len(g.turns) == 0 {
+			continue
+		}
+		count++
+		class := classifyWin(g)
+		classCounts[class]++
+		if count > top {
+			continue // still count classifications but skip detail output
+		}
+
+		prefix := g.header.GameID
+		if len(prefix) > 8 {
+			prefix = prefix[:8]
+		}
+		fmt.Printf("WIN: %s at turn %d (game %s)\n", class, g.footer.TotalTurns, prefix)
+
+		// Show last 10 turns.
+		start := len(g.turns) - 10
+		if start < 0 {
+			start = 0
+		}
+
+		// Track largest signal gain over the window.
+		type sigAccum struct {
+			name     string
+			firstVal float64
+			lastVal  float64
+		}
+		sigs := []sigAccum{
+			{"territory", g.turns[start].Territory, 0},
+			{"len_adv", g.turns[start].LenAdvantage, 0},
+			{"h2h", g.turns[start].H2H, 0},
+			{"confine", g.turns[start].OppConfinement + g.turns[start].SelfConfinement, 0},
+			{"food", g.turns[start].FoodUrgency + g.turns[start].FoodCluster + g.turns[start].FoodReach, 0},
+		}
+
+		for _, t := range g.turns[start:] {
+			fmt.Printf("  Turn %3d: eval %+7.1f  territory=%+.0f  h2h=%+.0f  confine=%+.0f  depth=%d\n",
+				*t.Turn, t.Eval, t.Territory, t.H2H,
+				t.OppConfinement+t.SelfConfinement, t.Depth)
+		}
+
+		last := g.turns[len(g.turns)-1]
+		sigs[0].lastVal = last.Territory
+		sigs[1].lastVal = last.LenAdvantage
+		sigs[2].lastVal = last.H2H
+		sigs[3].lastVal = last.OppConfinement + last.SelfConfinement
+		sigs[4].lastVal = last.FoodUrgency + last.FoodCluster + last.FoodReach
+
+		// Find biggest gain.
+		biggestName := ""
+		biggestGain := 0.0
+		for _, s := range sigs {
+			gain := s.lastVal - s.firstVal
+			if math.Abs(gain) > math.Abs(biggestGain) {
+				biggestGain = gain
+				biggestName = s.name
+			}
+		}
+		if biggestName != "" {
+			fmt.Printf("  Largest gain: %s (%+.1f over last %d turns)\n",
+				biggestName, biggestGain, len(g.turns)-start)
+		}
+		fmt.Println()
+	}
+
+	if count == 0 {
+		fmt.Println("No wins found.")
+		return
+	}
+
+	// Classification summary.
+	fmt.Println("---")
+	fmt.Printf("Win classification (%d wins):\n", count)
+	for class, n := range classCounts {
+		fmt.Printf("  %-20s %d (%.0f%%)\n", class, n, 100*float64(n)/float64(count))
+	}
+}
+
 func modeSignals(games []game) {
 	type signalStats struct {
 		name     string
@@ -441,7 +584,7 @@ func modeSignals(games []game) {
 }
 
 func main() {
-	mode := flag.String("mode", "summary", "summary | turning-points | deaths | signals")
+	mode := flag.String("mode", "summary", "summary | turning-points | deaths | wins | signals")
 	top := flag.Int("top", 10, "number of items to show")
 	threshold := flag.Float64("threshold", 15.0, "eval swing threshold for turning points")
 	flag.Parse()
@@ -465,6 +608,8 @@ func main() {
 		modeTurningPoints(games, *threshold, *top)
 	case "deaths":
 		modeDeaths(games, *top)
+	case "wins":
+		modeWins(games, *top)
 	case "signals":
 		modeSignals(games)
 	default:
