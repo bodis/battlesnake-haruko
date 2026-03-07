@@ -10,11 +10,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iterations 1-20, 23 (see ROADMAP_FINISHED.md) |
+| **Completed** | Iterations 1-20, 23-24 (see ROADMAP_FINISHED.md) |
 | **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 25 (superseded by 23) |
-| **Next** | Iteration 24 |
-| **Current** | v23 Territory bottleneck detection; BRS depth ~12-13; Evaluate ~2450ns/0 allocs; 58% vs v20 |
-| **Key insight** | Eval quality > search depth. But eval cost doubled in Iter 23 — next steps should extract more value from existing signals (calibration) and reclaim eval budget (phase-gating). |
+| **Next** | Iteration 25 |
+| **Current** | v24 Weight calibration; BRS depth ~12-13; Evaluate ~2450ns/0 allocs; 61% vs v23 |
+| **Key insight** | Weight calibration is high-value: 6 of 12 weights improved, yielding 61% combined. Core weights (territory, length, H2H) were all undertuned. Food weights benefit from further reduction. |
 
 ---
 
@@ -23,46 +23,6 @@
 > **The situation:** We have 13 eval signals, most with weights set by intuition. Iter 23 doubled eval cost
 > for a strong 58% win. The next phase extracts maximum value from existing infrastructure before adding
 > new signals. Three steps: calibrate weights, reclaim eval speed, then reassess with fresh trace data.
-
-### Iteration 24 — Weight Calibration
-
-**Status:** TODO
-**Depends on:** Iterations 20, 23
-
-**Goal:** Systematically tune all eval weights. Many were set by intuition. Iter 20 showed weights are highly sensitive (halving food strategy weights: 47% → 54%).
-
-**Weights to tune (~13):**
-
-| Category | Weights | Current |
-|----------|---------|---------|
-| Territory | wTerritory coefficients | `1.0 - 0.2×early + 0.3×late` |
-| Length | wLen | `2.0 + 1.0×early - 0.5×late` |
-| H2H pressure | wH2H | `5.0 - 2.0×late` |
-| Confinement | opp / self | 50/15 and 25/5 |
-| Tail chase | wTailChase | 3.0 |
-| Food urgency | wFoodUrgency | 0.5 |
-| Food cluster | wFoodCluster | `1.5 × early` |
-| Food reach | wFoodReach | 0.5 |
-| Food denial | wFoodDenial | 2.0 |
-| Starvation risk | wStarvationRisk | 2.5 |
-| Growth urgency | wGrowthUrgency | `0.3 × early` |
-| Bottleneck | wBottleneck | `0.3 × (0.5 + 0.5×late)` |
-
-**Approach:**
-1. Start with bottleneck weight (never tuned, conservative 0.3 — try 0.5, 0.2)
-2. Then food signals (known sensitive from Iter 20)
-3. Then core signals (territory, length, H2H)
-4. One weight at a time: 2× it, 0.5× it, compare N=50
-5. If >55%: keep. If <50%: revert. If 50-55%: noise, skip.
-6. After individual sweeps, test 2-3 combined adjustments
-7. ~15-20 compare runs total
-
-**Files:**
-| File | Action |
-|------|--------|
-| `logic/eval.go` | Adjust weights based on A/B results |
-
-**Verify:** Each change via `make compare N=50`. Final combined result via `make compare N=100`.
 
 ---
 
@@ -137,6 +97,6 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | 21 | — | — | ❌ Dead end (37–48%) |
 | 22 | — | — | ❌ Dead end (42–49%) |
 | 23 | `snapshots/haruko-0e6fdda` | ~287-350 | Territory bottleneck detection; 58% vs v20 |
-| 24 | | | Weight calibration |
+| 24 | `snapshots/haruko-355c7d3` | ~337 | Weight calibration; 61% vs v23 |
 | 25 | | | Phase-gate bottleneck detection |
 | 26 | | | Late-game survival (conditional on trace data) |

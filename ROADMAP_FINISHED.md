@@ -406,6 +406,49 @@ Every past win came from deeper search or better eval. Search mechanics (pruning
 
 ---
 
+## Phase 9: Optimization & Calibration
+
+### Iteration 24 — Weight Calibration
+
+**Status:** DONE
+**Depends on:** Iterations 20, 23
+
+**Goal:** Systematically A/B test all eval weights. Most were set by intuition. Iter 20 proved weights are sensitive.
+
+**What was built:**
+- Prioritized sweep of 12 weight tests (N=50 each), cumulative keep/revert
+- 6 weights improved, 6 reverted (noise or loss)
+
+**Weight changes:**
+
+| Weight | Old | New | Test Win% | Decision |
+|--------|-----|-----|-----------|----------|
+| wBottleneck | 0.3 | 0.6 | 42% | REVERT |
+| wBottleneck | 0.3 | 0.15 | 44% | REVERT |
+| wTerritory | 1.0 | 1.5 | 56% | KEEP |
+| wLen | 2.0 | 3.0 | 56% | KEEP |
+| wH2H | 5.0 | 3.0 | 54% | REVERT |
+| wH2H | 5.0 | 8.0 | 64% | KEEP |
+| wTailChase | 3.0 | 5.0 | 58% | KEEP |
+| wStarvationRisk | 2.5 | 1.5 | 62% | KEEP |
+| wFoodDenial | 2.0 | 1.0 | 52% | REVERT |
+| wFoodCluster | 1.5 | 1.0 | 62% | KEEP |
+| wGrowthUrgency | 0.3 | 0.15 | 38% | REVERT |
+| wFoodReach | 0.5 | 0.3 | 52% | REVERT |
+
+**Key findings:**
+- Core weights (territory, length, H2H) were all undertuned — the biggest wins
+- H2H at 8.0 was the single strongest individual change (64%)
+- Food weights continue to benefit from reduction (Iter 20 trend confirmed)
+- wBottleneck 0.3 is well-calibrated — both directions lost
+- wGrowthUrgency 0.3 is important — halving it lost badly (38%)
+
+**Cost:** No change — same eval, just different constants.
+
+**Result:** 61% vs v23 (N=100 confirmed). ~337 avg turns.
+
+---
+
 ### Iteration 21 — Positional Quality ❌ DEAD END
 
 **Status:** DEAD END

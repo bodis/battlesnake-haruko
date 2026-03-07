@@ -34,11 +34,11 @@ When finishing an iteration:
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 - Board sizes: 7x7, 11x11, 19x19 all supported. `maxBoardCells=361`. Loops use `Width*Height`, no 11x11 cost.
 
-## Current state (Iter 23, Iter 21+22 dead ends)
-Territory bottleneck detection (Tarjan's AP on territory subgraph). BRS depth ~12-13. Voronoi: ~2400ns/0 allocs. Evaluate: ~2450ns/0 allocs. BRS node: ~2.5µs/0 allocs. 58% vs v20.
+## Current state (Iter 24, Iter 21+22 dead ends)
+Weight calibration: 6/12 weights improved. Territory 1.0→1.5, Length 2.0→3.0, H2H 5.0→8.0, TailChase 3.0→5.0, StarvationRisk 2.5→1.5, FoodCluster 1.5→1.0. BRS depth ~12-13. Evaluate: ~2450ns/0 allocs. 61% vs v23.
 
 ## Direction
-Eval quality > search depth. Tarjan's AP adds genuinely new structural info. Next: weight calibration (Iter 24), late-game survival signals.
+Phase-gate bottleneck detection (Iter 25), then trace analysis for late-game survival (Iter 26).
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.

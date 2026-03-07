@@ -88,11 +88,11 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 	if vr.IsPartitioned && lateBlend < 0.5 {
 		lateBlend = 0.5
 	}
-	wTerritory := 1.0 - 0.2*earlyBlend + 0.3*lateBlend
+	wTerritory := 1.5 - 0.3*earlyBlend + 0.45*lateBlend
 	score := wTerritory * float64(vr.MyTerritory-vr.OppTerritory)
 
 	// Early-game food control (distance-weighted, not flat count).
-	score += 1.5 * earlyBlend * vr.MyFoodValue // wFoodCluster
+	score += 1.0 * earlyBlend * vr.MyFoodValue // wFoodCluster
 
 	// Food reach advantage.
 	if vr.MyClosestFoodDist > 0 && vr.OppClosestFoodDist > 0 {
@@ -113,7 +113,7 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 	}
 	// Starvation risk (independent of opponent).
 	if vr.MyFood == 0 && me.Health < 50 {
-		score -= 2.5 * float64(50-me.Health) / 50.0 // wStarvationRisk
+		score -= 1.5 * float64(50-me.Health) / 50.0 // wStarvationRisk
 	}
 
 	// Growth urgency: penalize being undersized in early game.
@@ -125,8 +125,8 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 	}
 
 	// Phase-modulated weights.
-	wLen := 2.0 + 1.0*earlyBlend - 0.5*lateBlend
-	wH2H := 5.0 - 2.0*lateBlend
+	wLen := 3.0 + 1.5*earlyBlend - 0.75*lateBlend
+	wH2H := 8.0 - 3.2*lateBlend
 
 	// Accumulate per-opponent scores.
 	myHead := me.Head()
@@ -178,7 +178,7 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 		tail := me.Tail()
 		tailDist := abs(myHead.X-tail.X) + abs(myHead.Y-tail.Y)
 		if tailDist > 0 {
-			score += 3.0 * lateBlend / float64(tailDist)
+			score += 5.0 * lateBlend / float64(tailDist)
 		}
 	}
 
@@ -266,11 +266,11 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 	}
 	b.LateBlend = lateBlend
 
-	wTerritory := 1.0 - 0.2*earlyBlend + 0.3*lateBlend
+	wTerritory := 1.5 - 0.3*earlyBlend + 0.45*lateBlend
 	b.Territory = wTerritory * float64(vr.MyTerritory-vr.OppTerritory)
 
 	// Food cluster.
-	b.FoodCluster = 1.5 * earlyBlend * vr.MyFoodValue
+	b.FoodCluster = 1.0 * earlyBlend * vr.MyFoodValue
 
 	// Food reach.
 	if vr.MyClosestFoodDist > 0 && vr.OppClosestFoodDist > 0 {
@@ -292,7 +292,7 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 
 	// Starvation risk.
 	if vr.MyFood == 0 && me.Health < 50 {
-		b.StarvationRisk = -(2.5 * float64(50-me.Health) / 50.0)
+		b.StarvationRisk = -(1.5 * float64(50-me.Health) / 50.0)
 	}
 
 	// Growth urgency.
@@ -303,8 +303,8 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 		}
 	}
 
-	wLen := 2.0 + 1.0*earlyBlend - 0.5*lateBlend
-	wH2H := 5.0 - 2.0*lateBlend
+	wLen := 3.0 + 1.5*earlyBlend - 0.75*lateBlend
+	wH2H := 8.0 - 3.2*lateBlend
 
 	myHead := me.Head()
 	for i := range g.Snakes {
@@ -351,7 +351,7 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 		tail := me.Tail()
 		tailDist := abs(myHead.X-tail.X) + abs(myHead.Y-tail.Y)
 		if tailDist > 0 {
-			b.TailChase = 3.0 * lateBlend / float64(tailDist)
+			b.TailChase = 5.0 * lateBlend / float64(tailDist)
 		}
 	}
 

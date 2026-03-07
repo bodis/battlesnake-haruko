@@ -46,16 +46,17 @@ HTTP request (GameState JSON)
 
 | Signal | Weight | Description |
 |--------|--------|-------------|
-| Voronoi territory | `1.0 - 0.2×early + 0.3×late` | Multi-source BFS territory difference |
-| Length advantage | `2.0 + 1.0×early - 0.5×late` | Per-opponent length delta |
-| Head-to-head pressure | `5.0 - 2.0×late` | Bonus/penalty when heads ≤2 Manhattan distance |
+| Voronoi territory | `1.5 - 0.3×early + 0.45×late` | Multi-source BFS territory difference |
+| Length advantage | `3.0 + 1.5×early - 0.75×late` | Per-opponent length delta |
+| Head-to-head pressure | `8.0 - 3.2×late` | Bonus/penalty when heads ≤2 Manhattan distance |
 | Opponent confinement | 50.0 / 15.0 | Opponent has 0 / 1 safe moves |
 | Food urgency | `0.5 × (threshold - health)` | Inverse distance to nearest food, gated by health |
-| Food cluster value | `1.5 × early` | Distance-weighted food quality (sum 1/dist), early game |
+| Food cluster value | `1.0 × early` | Distance-weighted food quality (sum 1/dist), early game |
 | Food reach advantage | 0.5 | Opponent's closest food dist minus ours |
 | Food denial | 2.0 | Bonus when opponent has 0 food and health < 40 |
-| Starvation risk | 2.5 | Penalty when we have 0 food and health < 50 |
+| Starvation risk | 1.5 | Penalty when we have 0 food and health < 50 |
 | Growth urgency | `0.3 × early` | Penalty when snake length < expected for turn |
+| Tail chase | `5.0 × late` | Reward proximity to own tail when space is tight |
 | Bottleneck | `0.3 × (0.5 + 0.5×late)` | Territory behind live articulation points (Tarjan's) |
 
 ### Game Phase
@@ -118,6 +119,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 19 | Voronoi strategic extraction | (infra only) |
 | 20 | Food strategy signals | 54% vs v19, ~443 avg turns |
 | 23 | Territory bottleneck detection (Tarjan's AP) | 58% vs v20 |
+| 24 | Weight calibration (6/12 weights improved) | 61% vs v23 |
 
 ## Dead Ends
 
@@ -143,6 +145,9 @@ Edge/corner penalty, territory depth adequacy, center-of-mass advantage. All thr
 
 ### Opponent pressure & aggression (Iter 22): 42–49%
 Dominance score (length+territory+food composite), H2H range expansion, confinement scaling, health pressure, directional pressure (push to edge). Tested 7 variants isolating each signal: full plan (42%), no directional + reduced scaling (49%), H2H scaling instead of range (47%), confinement+health only (48%), health pressure only (43%), dominance-scaled food denial (46%). All negative. Root cause: in self-play, both sides use the same eval, so aggression modulation doesn't give asymmetric advantage. The search already implicitly finds aggressive moves when they lead to better territory/length/confinement positions. Explicit aggression signals add noise that confuses BRS.
+
+### Weight calibration insights (Iter 24)
+Core weights (territory 1.0→1.5, length 2.0→3.0, H2H 5.0→8.0) were all undertuned — biggest win was H2H at 64%. Food weights benefit from continued reduction (cluster 1.5→1.0, starvation 2.5→1.5). Bottleneck 0.3 is well-calibrated (both directions lost). Growth urgency 0.3 is important (halving lost at 38%). Combined: 61% vs v23.
 
 ### Key principle
 Every past win came from deeper search or better eval. Search mechanics (pruning, ordering) are saturated at BF=4. The remaining lever is eval quality — but new signals must add genuinely new information, not restate what Voronoi territory already captures. Dominance-based weight modulation is also ineffective because both sides of self-play share the same eval.

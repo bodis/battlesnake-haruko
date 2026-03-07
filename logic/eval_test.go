@@ -52,14 +52,16 @@ func TestEval_HeadToHeadLonger(t *testing.T) {
 }
 
 func TestEval_HeadToHeadShorter(t *testing.T) {
+	// Near: heads adjacent (dist=1), we're shorter → H2H penalty applies.
 	g := twoSnakeGame(
 		makeSnake("me", []Coord{{5, 5}, {5, 4}}),
 		makeSnake("opp", []Coord{{5, 6}, {5, 7}, {5, 8}, {5, 9}}),
 	)
 
+	// Far: same setup but opponent 3 cells away (dist=3) → no H2H penalty.
 	gFar := twoSnakeGame(
-		makeSnake("me", []Coord{{0, 0}, {0, 1}}),
-		makeSnake("opp", []Coord{{10, 10}, {10, 9}, {10, 8}, {10, 7}}),
+		makeSnake("me", []Coord{{5, 5}, {5, 4}}),
+		makeSnake("opp", []Coord{{5, 8}, {5, 9}, {5, 10}, {4, 10}}),
 	)
 
 	scoreNear := Evaluate(g, 0)
