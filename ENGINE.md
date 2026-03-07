@@ -90,7 +90,7 @@ Supports 7×7, 11×11, and 19×19 boards (all standard Battlesnake sizes). Board
 
 All fixed-size arrays use `maxBoardCells = 361` (19×19). Loops iterate only `Width × Height` cells, so 11×11 games pay no cost for the larger arrays. Iterative deepening naturally adapts search depth to the time budget — on 19×19 with ~3× more cells, eval is slower so the engine reaches fewer plies (est. depth 6–8 vs 12–13 on 11×11), but still uses the full 300ms.
 
-## Performance
+### Hot Path
 
 Entire hot path is allocation-free (sync.Pool + stack arrays):
 
@@ -146,8 +146,26 @@ Edge/corner penalty, territory depth adequacy, center-of-mass advantage. All thr
 ### Opponent pressure & aggression (Iter 22): 42–49%
 Dominance score (length+territory+food composite), H2H range expansion, confinement scaling, health pressure, directional pressure (push to edge). Tested 7 variants isolating each signal: full plan (42%), no directional + reduced scaling (49%), H2H scaling instead of range (47%), confinement+health only (48%), health pressure only (43%), dominance-scaled food denial (46%). All negative. Root cause: in self-play, both sides use the same eval, so aggression modulation doesn't give asymmetric advantage. The search already implicitly finds aggressive moves when they lead to better territory/length/confinement positions. Explicit aggression signals add noise that confuses BRS.
 
-### Weight calibration insights (Iter 24)
-Core weights (territory 1.0→1.5, length 2.0→3.0, H2H 5.0→8.0) were all undertuned — biggest win was H2H at 64%. Food weights benefit from continued reduction (cluster 1.5→1.0, starvation 2.5→1.5). Bottleneck 0.3 is well-calibrated (both directions lost). Growth urgency 0.3 is important (halving lost at 38%). Combined: 61% vs v23.
-
 ### Key principle
 Every past win came from deeper search or better eval. Search mechanics (pruning, ordering) are saturated at BF=4. The remaining lever is eval quality — but new signals must add genuinely new information, not restate what Voronoi territory already captures. Dominance-based weight modulation is also ineffective because both sides of self-play share the same eval.
+
+## Findings
+
+Insights from successful iterations that inform future development.
+
+### Eval > search depth (Iter 5-7, 23)
+Deeper search with a bad eval is counterproductive. Iter 23 doubled eval cost but won 58% — better eval beats deeper search.
+
+### Weight sensitivity (Iter 20, 24)
+Eval weights are highly sensitive. Iter 20: halving food strategy weights flipped 47% → 54%. Iter 24: systematic calibration found 6/12 weights undertuned, yielding 61%. Key results:
+- Core weights were all too low: Territory 1.0→1.5, Length 2.0→3.0, H2H 5.0→8.0 (H2H was single strongest at 64%)
+- Food weights benefit from reduction: FoodCluster 1.5→1.0, StarvationRisk 2.5→1.5
+- TailChase 3.0→5.0 improved late-game survival
+- Bottleneck 0.3 is well-calibrated (both directions lost)
+- GrowthUrgency 0.3 is important — halving it lost badly (38%)
+
+### Search mechanics saturated at BF=4 (Iter 13, 15, 18)
+Pruning (LMR, NMP), ordering (heuristic), and extensions (QS) all ≤51%. BRS already narrow. The winning lever is eval quality (Iter 8: 88%, Iter 17: 59%, Iter 20: 54%, Iter 23: 58%, Iter 24: 61%).
+
+### Self-play limitations (Iter 22)
+Both sides share the same eval, so dynamic modulation (aggression, dominance scaling) gives no asymmetric advantage. Static weight tuning works because it improves absolute position assessment.

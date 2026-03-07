@@ -38,7 +38,7 @@ When finishing an iteration:
 Weight calibration: 6/12 weights improved. Territory 1.0→1.5, Length 2.0→3.0, H2H 5.0→8.0, TailChase 3.0→5.0, StarvationRisk 2.5→1.5, FoodCluster 1.5→1.0. BRS depth ~12-13. Evaluate: ~2450ns/0 allocs. 61% vs v23.
 
 ## Direction
-Phase-gate bottleneck detection (Iter 25), then trace analysis for late-game survival (Iter 26).
+Trace analysis first (Iter 25): understand v24's win/loss patterns before deciding next code change. Analyze both deaths (how we die) and wins (how opponent dies, turning points, self-destructs vs active kills).
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.
