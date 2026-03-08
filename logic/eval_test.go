@@ -112,30 +112,36 @@ func TestEval_OpponentNearlyTrapped(t *testing.T) {
 }
 
 func TestSafeMoveCount_Corner(t *testing.T) {
+	// (0,0) with body at (1,0). Down/Left=wall. Right=(1,0) is own tail, retracts → safe.
+	// Up=(0,1) safe. So 2 safe moves.
 	s := makeSnake("s", []Coord{{0, 0}, {1, 0}})
 	g := &GameSim{Width: 11, Height: 11, Snakes: []SimSnake{s}}
 	got := safeMoveCount(g, &g.Snakes[0])
-	if got != 1 {
-		t.Errorf("corner snake: expected 1 safe move, got %d", got)
+	if got != 2 {
+		t.Errorf("corner snake: expected 2 safe moves (Up + Right via tail retract), got %d", got)
 	}
 }
 
 func TestSafeMoveCount_Open(t *testing.T) {
+	// (5,5) with body at (5,4). Down=(5,4) is own tail, retracts → safe. All 4 safe.
 	s := makeSnake("s", []Coord{{5, 5}, {5, 4}})
 	g := &GameSim{Width: 11, Height: 11, Snakes: []SimSnake{s}}
 	got := safeMoveCount(g, &g.Snakes[0])
-	if got != 3 {
-		t.Errorf("open center: expected 3 safe moves, got %d", got)
+	if got != 4 {
+		t.Errorf("open center: expected 4 safe moves (own tail retracts), got %d", got)
 	}
 }
 
-func TestSafeMoveCount_BodyBlocked(t *testing.T) {
+func TestSafeMoveCount_BodyBlockedTailRetracts(t *testing.T) {
+	// me: head(2,2), body(2,1). opp: head(3,3), (2,3), (1,2), tail(3,2).
+	// Up→(2,3): opp seg1 → blocked. Down→(2,1): own tail retracts → safe.
+	// Left→(1,2): opp seg2 → blocked. Right→(3,2): opp tail retracts → safe.
 	me := makeSnake("me", []Coord{{2, 2}, {2, 1}})
 	opp := makeSnake("opp", []Coord{{3, 3}, {2, 3}, {1, 2}, {3, 2}})
 	g := &GameSim{Width: 11, Height: 11, Snakes: []SimSnake{me, opp}}
 	got := safeMoveCount(g, &g.Snakes[0])
-	if got != 0 {
-		t.Errorf("body-blocked: expected 0 safe moves, got %d", got)
+	if got != 2 {
+		t.Errorf("body-blocked with retracting tails: expected 2 safe moves, got %d", got)
 	}
 }
 
@@ -477,6 +483,60 @@ func TestEval_BottleneckPenalty(t *testing.T) {
 	vr := VoronoiTerritory(gCorridor, 0, false)
 	if vr.MyThreatenedTerritory == 0 {
 		t.Error("corridor: expected MyThreatenedTerritory > 0")
+	}
+}
+
+func TestIsSafeDir_TailRetracts(t *testing.T) {
+	// Opp tail at (3,2), not stacked, no food → retracts → moving Right to (3,2) is safe.
+	me := makeSnake("me", []Coord{{2, 2}, {2, 1}})
+	opp := makeSnake("opp", []Coord{{3, 3}, {2, 3}, {1, 2}, {3, 2}})
+	g := &GameSim{Width: 11, Height: 11, Snakes: []SimSnake{me, opp}}
+	if !isSafeDir(g, &g.Snakes[0], Right) {
+		t.Error("expected Right to be safe (opp tail retracts)")
+	}
+}
+
+func TestIsSafeDir_StackedTailBlocks(t *testing.T) {
+	// Opp tail stacked (last two segments same) → tail won't retract → blocks.
+	me := makeSnake("me", []Coord{{2, 2}, {2, 1}})
+	opp := makeSnake("opp", []Coord{{3, 3}, {2, 3}, {3, 2}, {3, 2}})
+	g := &GameSim{Width: 11, Height: 11, Snakes: []SimSnake{me, opp}}
+	if isSafeDir(g, &g.Snakes[0], Right) {
+		t.Error("expected Right to be unsafe (opp tail stacked)")
+	}
+}
+
+func TestIsSafeDir_FoodAdjacentBlocksTailRetract(t *testing.T) {
+	// Opp tail at (3,2), not stacked, but food adjacent to opp head → conservative: blocks.
+	me := makeSnake("me", []Coord{{2, 2}, {2, 1}})
+	opp := makeSnake("opp", []Coord{{3, 3}, {2, 3}, {1, 2}, {3, 2}})
+	g := &GameSim{Width: 11, Height: 11, Snakes: []SimSnake{me, opp}, Food: []Coord{{3, 4}}}
+	if isSafeDir(g, &g.Snakes[0], Right) {
+		t.Error("expected Right to be unsafe (food adjacent to opp head, tail may not retract)")
+	}
+}
+
+func TestIsSafeDir_OwnTailRetracts(t *testing.T) {
+	// Self-chase: own tail at target cell, not stacked, no food → retracts → safe.
+	me := makeSnake("me", []Coord{{2, 2}, {3, 2}, {3, 1}, {2, 1}})
+	g := &GameSim{Width: 11, Height: 11, Snakes: []SimSnake{me}}
+	// Down goes to (2,1) which is our own tail — should retract.
+	if !isSafeDir(g, &g.Snakes[0], Down) {
+		t.Error("expected Down to be safe (own tail retracts)")
+	}
+}
+
+func TestSafeMoveCount_TailAware(t *testing.T) {
+	// me at (5,5), body (5,4). Opp: head(6,6), (6,5), (4,5), tail(5,6).
+	// Up→(5,6): opp tail retracts → safe. Down→(5,4): own tail retracts → safe.
+	// Left→(4,5): opp seg2 → blocked. Right→(6,5): opp seg1 → blocked.
+	me := makeSnake("me", []Coord{{5, 5}, {5, 4}})
+	opp := makeSnake("opp", []Coord{{6, 6}, {6, 5}, {4, 5}, {5, 6}})
+	g := &GameSim{Width: 11, Height: 11, Snakes: []SimSnake{me, opp}}
+
+	got := safeMoveCount(g, &g.Snakes[0])
+	if got != 2 {
+		t.Errorf("tail-aware safe count: expected 2 (Up via opp tail + Down via own tail), got %d", got)
 	}
 }
 

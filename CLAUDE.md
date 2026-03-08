@@ -34,11 +34,11 @@ When finishing an iteration:
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 - Board sizes: 7x7, 11x11, 19x19 all supported. `maxBoardCells=361`. Loops use `Width*Height`, no 11x11 cost.
 
-## Current state (Iter 27, Iter 21+22+27partial dead ends)
-Wall-only move pruning in BRS: `wallSafeMoves` filters off-board moves in `brsMax`/`brsMin`. Full `isSafeDir` pruning (wall+body) failed at 32% — body checks are static, don't account for tail retraction. Wall-only is sound. 62% vs v26 (N=100). Also added `searchContext.nodes` + `LastNodeCount` instrumentation.
+## Current state (Iter 28, Iter 21+22+27partial+28partial dead ends)
+Tail-aware `isSafeDir`: skips tail segments that will retract (not stacked, no food adjacent to head). Improves eval confinement accuracy. BRS pruning unchanged (wall-only) — tail-aware body pruning tested at 43%, search needs full move space. 61% vs v27 (N=100).
 
 ## Direction
-TBD — analyze v27 game traces to identify next lever. Candidates: late-game survival signals, further phase-gating, new eval signals.
+TBD — analyze v28 game traces to identify next lever. Candidates: late-game survival signals, further phase-gating, new eval signals.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.

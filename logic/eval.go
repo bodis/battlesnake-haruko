@@ -1,7 +1,35 @@
 package logic
 
+// tailStacked returns true if the snake's tail is stacked (doubled up),
+// meaning it won't retract next turn (e.g. after eating).
+func tailStacked(s *SimSnake) bool {
+	n := len(s.Body)
+	return n >= 2 && s.Body[n-1] == s.Body[n-2]
+}
+
+// foodAdjacentToHead returns true if any food is within Manhattan distance 1
+// of the snake's head (i.e. the snake might eat next turn, preventing tail retraction).
+func foodAdjacentToHead(g *GameSim, s *SimSnake) bool {
+	head := s.Head()
+	for _, f := range g.Food {
+		dx := head.X - f.X
+		if dx < 0 {
+			dx = -dx
+		}
+		dy := head.Y - f.Y
+		if dy < 0 {
+			dy = -dy
+		}
+		if dx+dy <= 1 {
+			return true
+		}
+	}
+	return false
+}
+
 // isSafeDir returns true if moving snake s in direction d doesn't immediately
-// hit a wall or any alive snake's body segment (segments 1..len-1).
+// hit a wall or any alive snake's body segment. Tail segments are skipped when
+// the tail will retract (not stacked and no food adjacent to that snake's head).
 func isSafeDir(g *GameSim, s *SimSnake, d Direction) bool {
 	next := s.Head().Move(d)
 	if next.X < 0 || next.X >= g.Width || next.Y < 0 || next.Y >= g.Height {
@@ -12,8 +40,13 @@ func isSafeDir(g *GameSim, s *SimSnake, d Direction) bool {
 		if !s2.IsAlive() {
 			continue
 		}
+		lastSeg := len(s2.Body) - 1
+		tailRetracts := lastSeg >= 1 && !tailStacked(s2) && !foodAdjacentToHead(g, s2)
 		for seg := 1; seg < len(s2.Body); seg++ {
 			if next == s2.Body[seg] {
+				if tailRetracts && seg == lastSeg {
+					continue
+				}
 				return false
 			}
 		}

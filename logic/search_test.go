@@ -315,8 +315,10 @@ func TestIsQuiet_Calm(t *testing.T) {
 }
 
 func TestIsQuiet_TrappedSnake(t *testing.T) {
+	// Opp at (0,0) with body filling all adjacent cells, tail stacked so no retraction.
 	me := makeSnake("me", []Coord{{9, 9}, {9, 8}})
-	opp := makeSnake("opp", []Coord{{0, 0}, {0, 1}, {1, 0}})
+	opp := makeSnake("opp", []Coord{{0, 0}, {0, 1}, {1, 0}, {1, 0}})
+	opp.Length = 4
 	g := NewGameSim(11, 11, []SimSnake{me, opp}, nil, nil)
 
 	if isQuiet(g, 0, 1) {
@@ -345,6 +347,29 @@ func TestNodeCount(t *testing.T) {
 		t.Errorf("expected positive node count, got %d", g.LastNodeCount)
 	}
 	t.Logf("50ms budget: depth=%d nodes=%d", g.LastCompletedDepth, g.LastNodeCount)
+}
+
+// --- wallSafeMoves Tests ---
+
+func TestWallSafeMoves_CornerPruning(t *testing.T) {
+	// Head at (0,0): Down and Left hit walls → pruned. Up and Right safe.
+	ordered := AllDirections
+	moves, n := wallSafeMoves(Coord{0, 0}, 11, 11, ordered)
+	if n != 2 {
+		t.Errorf("expected 2 wall-safe moves, got %d: %v", n, moves[:n])
+	}
+}
+
+func TestWallSafeMoves_AllWallsFallback(t *testing.T) {
+	// 1x1 board: all moves hit walls → fallback to all 4.
+	ordered := AllDirections
+	moves, n := wallSafeMoves(Coord{0, 0}, 1, 1, ordered)
+	if n != 4 {
+		t.Errorf("all-walls fallback: expected 4, got %d", n)
+	}
+	if moves != ordered {
+		t.Errorf("all-walls fallback: expected original ordering")
+	}
 }
 
 // TestEvaluate_MeDead: returns -1000 when our snake is eliminated.

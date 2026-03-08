@@ -99,6 +99,15 @@ func BenchmarkBRSNode(b *testing.B) {
 	}
 }
 
+func BenchmarkIsSafeDir(b *testing.B) {
+	g := standardBenchGame()
+	s := &g.Snakes[0]
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		isSafeDir(g, s, Up)
+	}
+}
+
 func BenchmarkBestMoveIterative(b *testing.B) {
 	g := standardBenchGame()
 	b.ResetTimer()

@@ -22,7 +22,7 @@ HTTP request (GameState JSON)
 | `main.go` | HTTP handlers, API→logic type bridge |
 | `logic/sim.go` | `GameSim`: state, `Clone`/`CloneFromPool`, `Step`, `IsOver` |
 | `logic/search.go` | `BestMoveIterative` (BRS), `BestMove` (paranoid minimax) |
-| `logic/eval.go` | `Evaluate`, `isSafeDir`, `safeMoveCount` |
+| `logic/eval.go` | `Evaluate`, `isSafeDir` (tail-aware), `safeMoveCount` |
 | `logic/voronoi.go` | `VoronoiTerritory` → `VoronoiResult` (territory, food, partitions) |
 | `logic/zobrist.go` | Zobrist hashing for TT |
 | `logic/tt.go` | Transposition table (1M entries, generation-based) |
@@ -124,6 +124,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 25 | Win/loss trace analysis | (analysis only, no code change) |
 | 26 | Phase-gate bottleneck detection | 67% vs v24, ~316 avg turns |
 | 27 | Wall-only move pruning in BRS | 62% vs v26, ~329 avg turns |
+| 28 | Tail-aware isSafeDir (eval only) | 61% vs v27, ~436 avg turns |
 
 ## Dead Ends
 
@@ -152,6 +153,9 @@ Dominance score (length+territory+food composite), H2H range expansion, confinem
 
 ### Full unsafe move pruning (Iter 27 partial): 32%
 Full `isSafeDir` pruning (wall + body collision) in `brsMax`/`brsMin`. `isSafeDir` is a static check on the current board — it doesn't account for tail retraction. Pruning an opponent move that appears to hit a body segment (but won't after the tail retracts) removes the min's actual best response, causing the engine to overestimate positions. Wall-only pruning (a subset) succeeded at 62% because walls never move.
+
+### Tail-aware body pruning in BRS (Iter 28 partial): 43%
+Even with correct tail-retraction logic in `isSafeDir`, using it for BRS move pruning is harmful. The search benefits from exploring body-collision moves to find optimal responses — removing them narrows the search tree in ways that lose strategically important lines. The eval-only approach (tail-aware confinement scoring) succeeded at 61%. Body-collision pruning in BRS is fundamentally flawed regardless of tail-awareness correctness.
 
 ### Key principle
 Every past win came from deeper search or better eval. Search mechanics (pruning, ordering) are saturated at BF=4. The remaining lever is eval quality — but new signals must add genuinely new information, not restate what Voronoi territory already captures. Dominance-based weight modulation is also ineffective because both sides of self-play share the same eval. Sound pruning (wall-only) is a valid third lever: it reduces BF without losing information.
@@ -182,6 +186,9 @@ Both sides share the same eval, so dynamic modulation (aggression, dominance sca
 
 ### Sound pruning vs heuristic pruning (Iter 27)
 Wall-only move pruning (skip moves that go off-board) is sound and wins 62% vs v26. Full `isSafeDir` pruning (wall + body) loses at 32% because body-collision checks are static and don't account for tail movement. The distinction: walls are immutable board boundaries, body segments are dynamic. Sound pruning reduces BF without information loss; heuristic pruning at BF=4 removes critical information.
+
+### Eval accuracy vs search pruning (Iter 28)
+Tail-aware `isSafeDir` (skipping retracting tails) improves eval accuracy → 61% vs v27. But using the same function to prune BRS moves loses at 43%. The distinction: eval benefits from accurate position assessment at every node, while search benefits from exploring the full move space including "bad" moves. Body-collision pruning removes the opponent's actual best responses from consideration, causing position overestimation. This confirms that BRS pruning should only remove provably impossible moves (walls), not merely "bad" ones.
 
 ### Phase-gating eval cost for depth (Iter 26)
 Skipping Tarjan's AP in early game (`lateBlend < 0.1`) recovers 57% of Voronoi cost (2414ns → 1051ns), translating to ~2 extra search plies. Result: 67% vs v24 — the strongest single-iteration improvement since Iter 8. The skipped signal contributes at most ~1.65 eval points at the threshold — well below noise floor. This confirms that early-game search depth is critical: the engine needs to see territory flips coming, and cheaper eval = more depth = better foresight.

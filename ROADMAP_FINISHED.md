@@ -547,3 +547,31 @@ Original plan: detect corridor-shaped territory via thin-cell counting (cells wi
 **Result:** 32% vs v26 (N=100)
 
 Full `isSafeDir` pruning (walls + body segments) in both `brsMax` and `brsMin`. Failed because `isSafeDir` is a static check — it doesn't account for tail retraction. Removing an opponent body-collision move that is actually safe (tail will vacate) removes the min's best option, making us overestimate positions. Wall-only subset succeeded (62%).
+
+---
+
+### Iteration 28 — Tail-Aware Safe Move Check
+
+**Status:** DONE
+**Depends on:** Iteration 27
+
+**Goal:** Make `isSafeDir` account for tail retraction to improve eval accuracy (confinement scoring).
+
+**What was built:**
+- `tailStacked(s)` — returns true if snake's tail is doubled (won't retract after eating)
+- `foodAdjacentToHead(g, s)` — returns true if food within Manhattan distance 1 of head (may eat → tail stays)
+- Replaced `isSafeDir` body-segment loop: skips tail segment (`Body[len-1]`) when tail will retract (not stacked, no food adjacent to that snake's head). Conservative: food near head = assume eating = tail stays. Sound: never marks a truly unsafe move as safe.
+- Works for both self-chase (own tail retracts) and opponent body checks
+
+**Key discovery:** Tail-aware `isSafeDir` improves eval accuracy (61% vs v27), but using it for BRS move pruning is too aggressive (43% vs v27). The eval benefit comes from removing false +50/+15 confinement bonuses when opponents can actually escape via retracting tails. The pruning failure suggests that even with correct tail-awareness, body-collision pruning removes strategically important moves from BRS — the search needs to consider "bad" moves to find the best response. Wall-only pruning in BRS remains the right approach.
+
+**Result:** 61% vs v27 (N=100). ~436 avg turns. BRS pruning unchanged (wall-only).
+
+---
+
+### Iteration 28 (dead end) — Tail-Aware Body Pruning in BRS ❌
+
+**Status:** DEAD END
+**Result:** 43% vs v27 (N=100)
+
+Used tail-aware `isSafeDir` for BRS move pruning (replacing `wallSafeMoves` with `safeMoves` that calls `isSafeDir`). Even with correct tail-retraction logic, pruning body-collision moves from BRS is harmful — the search benefits from exploring "unsafe" moves to find optimal responses. Eval-only tail awareness succeeded (61%).
