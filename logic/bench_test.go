@@ -137,3 +137,17 @@ func BenchmarkBestMoveIterativeNodes(b *testing.B) {
 	}
 	b.ReportMetric(float64(totalNodes)/float64(b.N), "nodes/op")
 }
+
+func BenchmarkMCTSSearch(b *testing.B) {
+	g := standardBenchGame()
+	b.ResetTimer()
+	var totalVisits int32
+	for i := 0; i < b.N; i++ {
+		root := mctsSearch(g, 0, 1, 50*time.Millisecond)
+		for _, v := range root.visits {
+			totalVisits += v
+		}
+	}
+	b.ReportMetric(float64(totalVisits)/float64(b.N), "sims/op")
+}
+

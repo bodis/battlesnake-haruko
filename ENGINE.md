@@ -21,9 +21,10 @@ HTTP request (GameState JSON)
 |------|------|
 | `main.go` | HTTP handlers, API→logic type bridge |
 | `logic/sim.go` | `GameSim`: state, `Clone`/`CloneFromPool`, `Step`, `IsOver` |
-| `logic/search.go` | `BestMoveIterative` (BRS), `BestMove` (paranoid minimax) |
+| `logic/search.go` | `BestMoveIterative` (BRS), `BestMove` (paranoid minimax), `BRSResult`/`bestMoveBRS` |
 | `logic/eval.go` | `Evaluate`, `isSafeDir` (tail-aware), `safeMoveCount` |
 | `logic/voronoi.go` | `VoronoiTerritory` → `VoronoiResult` (territory, food, partitions) |
+| `logic/mcts.go` | `mctsSearch` — flat MCTS with UCB1 (infrastructure, not used in production) |
 | `logic/zobrist.go` | Zobrist hashing for TT |
 | `logic/tt.go` | Transposition table (1M entries, generation-based) |
 | `logic/types.go` | `Coord`, `Direction`, `MoveSet`, `MaxSnakes=4` |
@@ -125,6 +126,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 26 | Phase-gate bottleneck detection | 67% vs v24, ~316 avg turns |
 | 27 | Wall-only move pruning in BRS | 62% vs v26, ~329 avg turns |
 | 28 | Tail-aware isSafeDir (eval only) | 61% vs v27, ~436 avg turns |
+| 29 | Hybrid BRS+MCTS root-level vote | ❌ Dead end (2–46%) |
 
 ## Dead Ends
 
@@ -156,6 +158,9 @@ Full `isSafeDir` pruning (wall + body collision) in `brsMax`/`brsMin`. `isSafeDi
 
 ### Tail-aware body pruning in BRS (Iter 28 partial): 43%
 Even with correct tail-retraction logic in `isSafeDir`, using it for BRS move pruning is harmful. The search benefits from exploring body-collision moves to find optimal responses — removing them narrows the search tree in ways that lose strategically important lines. The eval-only approach (tail-aware confinement scoring) succeeded at 61%. Body-collision pruning in BRS is fundamentally flawed regardless of tail-awareness correctness.
+
+### Hybrid BRS+MCTS root-level vote (Iter 29): 2–46%
+Flat depth-1 MCTS (UCB1, random opponent moves, xorshift64 PRNG, ~52K sims/50ms) combined with BRS at root level. Tested 6 configurations: (1) Sequential 70/30 budget split with 0.7/0.3 weighted combination: 2%. (2) Sequential 95/5 budget split: 30% (pure budget loss — BRS is extremely sensitive to even 5% budget reduction). (3) Exact-tie-only tiebreaker with 1ms MCTS: 46%. (4) Concurrent goroutines: data race on sync.Pool (pooledGameSim.poolRef). Root causes: (a) BRS depth is the engine's primary strength and is hypersensitive to budget reduction — even 15ms less budget causes measurable depth regression. (b) Depth-1 MCTS with random opponents produces systematically wrong move preferences against optimal play — it favors moves good against weak play, which are bad against strong opponents. (c) Even as a tiebreaker on exact BRS score ties, MCTS adds noise that hurts. (d) Concurrent execution hits data races on the shared gameSimPool. Infrastructure retained: `BRSResult`, `bestMoveBRS()`, `mctsSearch()`, `mctsRoot` — available for future experimentation.
 
 ### Key principle
 Every past win came from deeper search or better eval. Search mechanics (pruning, ordering) are saturated at BF=4. The remaining lever is eval quality — but new signals must add genuinely new information, not restate what Voronoi territory already captures. Dominance-based weight modulation is also ineffective because both sides of self-play share the same eval. Sound pruning (wall-only) is a valid third lever: it reduces BF without losing information.
@@ -189,6 +194,9 @@ Wall-only move pruning (skip moves that go off-board) is sound and wins 62% vs v
 
 ### Eval accuracy vs search pruning (Iter 28)
 Tail-aware `isSafeDir` (skipping retracting tails) improves eval accuracy → 61% vs v27. But using the same function to prune BRS moves loses at 43%. The distinction: eval benefits from accurate position assessment at every node, while search benefits from exploring the full move space including "bad" moves. Body-collision pruning removes the opponent's actual best responses from consideration, causing position overestimation. This confirms that BRS pruning should only remove provably impossible moves (walls), not merely "bad" ones.
+
+### MCTS is not viable for this engine (Iter 29)
+Flat MCTS with random opponent moves produces systematically wrong move preferences. At BF=4 with BRS reaching depth 12-15, MCTS can't match tactical depth — it would need 4^12 ≈ 16M paths vs ~1M sims/sec capacity. BRS's budget sensitivity is extreme: even 5% budget reduction (15ms at 300ms) causes measurable depth regression and win-rate loss. The only viable path for MCTS-family algorithms would be AlphaZero-style with a trained neural network for both policy and value, but that's a fundamentally different architecture. Concurrent BRS+MCTS via goroutines is blocked by data races on the shared gameSimPool.
 
 ### Phase-gating eval cost for depth (Iter 26)
 Skipping Tarjan's AP in early game (`lateBlend < 0.1`) recovers 57% of Voronoi cost (2414ns → 1051ns), translating to ~2 extra search plies. Result: 67% vs v24 — the strongest single-iteration improvement since Iter 8. The skipped signal contributes at most ~1.65 eval points at the threshold — well below noise floor. This confirms that early-game search depth is critical: the engine needs to see territory flips coming, and cheaper eval = more depth = better foresight.

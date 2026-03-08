@@ -106,6 +106,68 @@ func (g *GameSim) BestMove(myID string, depth int) Direction {
 	return bestDir
 }
 
+// BRSResult captures all root direction scores from a BRS search.
+type BRSResult struct {
+	Scores   [4]float64
+	HasScore [4]bool
+	BestDir  Direction
+	Depth    int
+	Nodes    int64
+}
+
+// bestMoveBRS runs iterative deepening BRS and returns scores for all root directions.
+func (g *GameSim) bestMoveBRS(myIdx, oppIdx int, budget time.Duration) BRSResult {
+	var result BRSResult
+
+	tt := getSharedTT()
+	tt.NewGeneration()
+	deadline := time.Now().Add(budget)
+	pvMove := Down
+	hasPV := false
+
+	for depth := 1; depth <= brsMaxDepth; depth++ {
+		if depth > 1 {
+			remaining := time.Until(deadline)
+			if remaining < budget*3/10 {
+				break
+			}
+		}
+
+		ctx := &searchContext{deadline: deadline, tt: tt}
+		depthBest := Down
+		depthBestScore := math.Inf(-1)
+		var depthScores [4]float64
+		var depthHas [4]bool
+
+		rootMoves := orderedMoves(pvMove, hasPV, ctx.killers[depth], ctx.hasKillers[depth])
+		for _, myDir := range rootMoves {
+			score := brsMin(g, depth-1, math.Inf(-1), math.Inf(1), myDir, myIdx, oppIdx, ctx)
+			if ctx.timedOut {
+				break
+			}
+			depthScores[myDir] = score
+			depthHas[myDir] = true
+			if score > depthBestScore {
+				depthBestScore = score
+				depthBest = myDir
+			}
+		}
+
+		if ctx.timedOut {
+			break
+		}
+		result.Scores = depthScores
+		result.HasScore = depthHas
+		result.BestDir = depthBest
+		result.Depth = depth
+		result.Nodes = ctx.nodes
+		pvMove = depthBest
+		hasPV = true
+	}
+
+	return result
+}
+
 // BestMoveIterative runs iterative deepening with BRS (Best-Reply Search).
 func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction {
 	myIdx := g.ResolveIdx(myID)
@@ -121,49 +183,12 @@ func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction
 		}
 	}
 
-	tt := getSharedTT()
-	tt.NewGeneration()
-	deadline := time.Now().Add(budget)
-	bestDir := Down
-	pvMove := Down
-	hasPV := false
-
-	for depth := 1; depth <= brsMaxDepth; depth++ {
-		if depth > 1 {
-			remaining := time.Until(deadline)
-			if remaining < budget*3/10 {
-				break
-			}
-		}
-
-		ctx := &searchContext{deadline: deadline, tt: tt}
-		depthBest := Down
-		depthBestScore := math.Inf(-1)
-
-		rootMoves := orderedMoves(pvMove, hasPV, ctx.killers[depth], ctx.hasKillers[depth])
-		for _, myDir := range rootMoves {
-			score := brsMin(g, depth-1, math.Inf(-1), math.Inf(1), myDir, myIdx, oppIdx, ctx)
-			if ctx.timedOut {
-				break
-			}
-			if score > depthBestScore {
-				depthBestScore = score
-				depthBest = myDir
-			}
-		}
-
-		if ctx.timedOut {
-			break
-		}
-		bestDir = depthBest
-		pvMove = depthBest
-		hasPV = true
-		g.LastCompletedDepth = depth
-		g.LastNodeCount = ctx.nodes
-	}
-
-	return bestDir
+	result := g.bestMoveBRS(myIdx, oppIdx, budget)
+	g.LastCompletedDepth = result.Depth
+	g.LastNodeCount = result.Nodes
+	return result.BestDir
 }
+
 
 // isQuiet returns true if the position is calm (no imminent combat).
 func isQuiet(g *GameSim, myIdx, oppIdx int) bool {
