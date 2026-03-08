@@ -10,11 +10,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iterations 1-20, 23-28 (see ROADMAP_FINISHED.md) |
+| **Completed** | Iterations 1-20, 23-28, 30 (see ROADMAP_FINISHED.md) |
 | **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%), Iter 28 partial (tail-aware BRS pruning: 43%), Iter 29 (hybrid BRS+MCTS: 2–46%) |
-| **Next** | TBD — analyze v28 game traces to identify next lever |
-| **Current** | v28 Tail-aware isSafeDir; 61% vs v27 (N=100); ~436 avg turns |
-| **Key insight** | MCTS is not viable for this engine — BRS depth is hypersensitive to budget and MCTS random sampling produces wrong preferences against optimal play. Eval quality and search depth remain the only levers. |
+| **Next** | TBD — candidates: split bottleneck into offensive/defensive signals, fix dead starvation risk, weight recalibration |
+| **Current** | v30 Remove bottleneck + phase-dependent confinement; 61% vs v28 (N=100); ~433 avg turns |
+| **Key insight** | Bottleneck signal was anti-correlated with wins — aggressive squeezers have fragile territory. Phase-dependent confinement (stronger in late game) targets the 70% of deaths that are late-game. |
 
 ---
 
@@ -42,11 +42,14 @@
 
 Candidate directions for future iterations:
 
-**Late-game survival signals:**
-Space-to-length ratio, partition food planning, opponent space crisis.
+**Split bottleneck into offensive/defensive:**
+Iter 30 removed bottleneck entirely because it was anti-correlated. But the concept is valid — splitting into `OppThreatenedTerritory` (offensive reward) and `MyThreatenedTerritory` (defensive penalty with lower weight) could capture the strategic value without penalizing aggressive play.
 
-**Further phase-gating:**
-Other eval signals that could be skipped/simplified in early game for more depth.
+**Fix dead starvation risk signal:**
+StarvationRisk is 0.0 for all games (condition `MyFood==0 && Health<50` too strict). 10% of deaths are starvation with positive eval. Consider: health-to-food-distance ratio instead of binary territory-food check.
+
+**Weight recalibration:**
+Last calibration was Iter 24 (before Iter 26-28-30 changes). Phase-variable weights (territory, length, H2H) may be miscalibrated after 4 iterations of changes.
 
 ---
 
@@ -67,3 +70,4 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | 27 | `snapshots/haruko-wallonly` | ~329 | Wall-only move pruning; 62% vs v26 |
 | 28 | `snapshots/haruko-tailaware` | ~436 | Tail-aware isSafeDir; 61% vs v27 |
 | 29 | — | — | ❌ Dead end: hybrid BRS+MCTS (2–46%) |
+| 30 | `snapshots/haruko-c77fa1f` | ~433 | Remove bottleneck + phase confinement; 61% vs v28 |

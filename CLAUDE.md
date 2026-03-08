@@ -34,11 +34,11 @@ When finishing an iteration:
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 - Board sizes: 7x7, 11x11, 19x19 all supported. `maxBoardCells=361`. Loops use `Width*Height`, no 11x11 cost.
 
-## Current state (Iter 28 current, Iter 21+22+27partial+28partial+29 dead ends)
-Tail-aware `isSafeDir`: skips tail segments that will retract (not stacked, no food adjacent to head). Improves eval confinement accuracy. BRS pruning unchanged (wall-only). 61% vs v27 (N=100). Iter 29 (hybrid BRS+MCTS) dead end: MCTS not viable for this engine.
+## Current state (Iter 30 current, Iter 21+22+27partial+28partial+29 dead ends)
+Removed bottleneck signal (anti-correlated with wins) + phase-dependent confinement weights (stronger in late game). 61% vs v28 (N=100), ~433 avg turns. Tarjan AP always skipped. Confinement scales with lateBlend.
 
 ## Direction
-TBD — analyze v28 game traces to identify next lever. Candidates: late-game survival signals, further phase-gating, new eval signals. Algorithm changes (MCTS, hybrid search) ruled out.
+TBD — candidates: split bottleneck into offensive/defensive signals, fix dead starvation risk signal, weight recalibration. Algorithm changes (MCTS, hybrid search) ruled out.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.

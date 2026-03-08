@@ -446,8 +446,9 @@ func TestEvaluateDetailed_Consistency(t *testing.T) {
 	}
 }
 
-func TestEval_BottleneckPenalty(t *testing.T) {
-	// Corridor territory should have a non-zero bottleneck signal.
+func TestEval_BottleneckRemoved(t *testing.T) {
+	// Bottleneck signal removed in Iter 30 (anti-correlated with wins).
+	// Verify it's always zero in eval breakdown.
 	gCorridor := &GameSim{
 		Width:  7,
 		Height: 5,
@@ -459,30 +460,14 @@ func TestEval_BottleneckPenalty(t *testing.T) {
 	}
 
 	bdCorridor := EvaluateDetailed(gCorridor, 0)
-	if bdCorridor.Bottleneck == 0 {
-		t.Error("corridor position should have non-zero bottleneck signal")
+	if bdCorridor.Bottleneck != 0 {
+		t.Errorf("bottleneck signal should be zero after removal, got %f", bdCorridor.Bottleneck)
 	}
 
-	// Compact: open board — bottleneck should be zero.
-	gCompact := &GameSim{
-		Width:  11,
-		Height: 11,
-		Snakes: []SimSnake{
-			makeSnake("me", []Coord{{1, 1}, {1, 0}}),
-			makeSnake("opp", []Coord{{9, 9}, {9, 10}}),
-		},
-		Turn: 100,
-	}
-
-	bdCompact := EvaluateDetailed(gCompact, 0)
-	if bdCompact.Bottleneck != 0 {
-		t.Errorf("compact position should have zero bottleneck, got %f", bdCompact.Bottleneck)
-	}
-
-	// Verify the VoronoiResult correctly identifies our threatened territory.
+	// Verify VoronoiTerritory still detects threatened territory when asked.
 	vr := VoronoiTerritory(gCorridor, 0, false)
 	if vr.MyThreatenedTerritory == 0 {
-		t.Error("corridor: expected MyThreatenedTerritory > 0")
+		t.Error("corridor: expected MyThreatenedTerritory > 0 (Tarjan still works)")
 	}
 }
 

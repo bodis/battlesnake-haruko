@@ -50,7 +50,7 @@ HTTP request (GameState JSON)
 | Voronoi territory | `1.5 - 0.3×early + 0.45×late` | Multi-source BFS territory difference |
 | Length advantage | `3.0 + 1.5×early - 0.75×late` | Per-opponent length delta |
 | Head-to-head pressure | `8.0 - 3.2×late` | Bonus/penalty when heads ≤2 Manhattan distance |
-| Opponent confinement | 50.0 / 15.0 | Opponent has 0 / 1 safe moves |
+| Opponent confinement | `(50+25×late)` / `(15+10×late)` | Opponent has 0 / 1 safe moves |
 | Food urgency | `0.5 × (threshold - health)` | Inverse distance to nearest food, gated by health |
 | Food cluster value | `1.0 × early` | Distance-weighted food quality (sum 1/dist), early game |
 | Food reach advantage | 0.5 | Opponent's closest food dist minus ours |
@@ -58,7 +58,7 @@ HTTP request (GameState JSON)
 | Starvation risk | 1.5 | Penalty when we have 0 food and health < 50 |
 | Growth urgency | `0.3 × early` | Penalty when snake length < expected for turn |
 | Tail chase | `5.0 × late` | Reward proximity to own tail when space is tight |
-| Bottleneck | `0.3 × (0.5 + 0.5×late)` | Territory behind live articulation points (Tarjan's) |
+| ~~Bottleneck~~ | ~~removed (Iter 30)~~ | ~~Territory behind live articulation points (Tarjan's)~~ — anti-correlated with wins |
 
 ### Game Phase
 
@@ -81,7 +81,7 @@ Multi-source BFS from all alive heads. Body segments block, tails are passable. 
 - `MyTailReachable` — tail cell in our Voronoi territory
 - `MyThreatenedTerritory`, `OppThreatenedTerritory` — cells behind live articulation points (Tarjan's)
 
-Zero-alloc (workspace pooled). ~2400ns per call with bottleneck detection, ~1050ns without. Bottleneck detection (Tarjan's AP) is phase-gated: skipped when `lateBlend < 0.1` (board fill < 32%) to recover search depth in early game.
+Zero-alloc (workspace pooled). ~1050ns per call. Bottleneck detection (Tarjan's AP) is available but always skipped in eval since Iter 30 (anti-correlated with wins). Infrastructure retained for future experimentation.
 
 ## Performance
 
@@ -99,9 +99,9 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 |-----------|------|--------|
 | CloneFromPool | 19ns | 0 |
 | Step | 49ns | 0 |
-| Evaluate (early game) | ~1116ns | 0 |
-| Evaluate (late game) | ~2450ns | 0 |
-| BRS node (Clone+Step+Eval) | ~1185ns early / ~2490ns late | 0 |
+| Evaluate (early game) | ~1163ns | 0 |
+| Evaluate (late game) | ~244ns | 0 |
+| BRS node (Clone+Step+Eval) | ~1233ns early | 0 |
 
 ## Version History
 
@@ -127,6 +127,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 27 | Wall-only move pruning in BRS | 62% vs v26, ~329 avg turns |
 | 28 | Tail-aware isSafeDir (eval only) | 61% vs v27, ~436 avg turns |
 | 29 | Hybrid BRS+MCTS root-level vote | ❌ Dead end (2–46%) |
+| 30 | Remove bottleneck + phase-dependent confinement | 61% vs v28, ~433 avg turns |
 
 ## Dead Ends
 
@@ -177,7 +178,7 @@ Eval weights are highly sensitive. Iter 20: halving food strategy weights flippe
 - Core weights were all too low: Territory 1.0→1.5, Length 2.0→3.0, H2H 5.0→8.0 (H2H was single strongest at 64%)
 - Food weights benefit from reduction: FoodCluster 1.5→1.0, StarvationRisk 2.5→1.5
 - TailChase 3.0→5.0 improved late-game survival
-- Bottleneck 0.3 is well-calibrated (both directions lost)
+- ~~Bottleneck 0.3 is well-calibrated~~ Removed in Iter 30 — anti-correlated with wins (aggressive squeezers have fragile territory)
 - GrowthUrgency 0.3 is important — halving it lost badly (38%)
 
 ### Search mechanics saturated at BF=4 (Iter 13, 15, 18)
@@ -197,6 +198,9 @@ Tail-aware `isSafeDir` (skipping retracting tails) improves eval accuracy → 61
 
 ### MCTS is not viable for this engine (Iter 29)
 Flat MCTS with random opponent moves produces systematically wrong move preferences. At BF=4 with BRS reaching depth 12-15, MCTS can't match tactical depth — it would need 4^12 ≈ 16M paths vs ~1M sims/sec capacity. BRS's budget sensitivity is extreme: even 5% budget reduction (15ms at 300ms) causes measurable depth regression and win-rate loss. The only viable path for MCTS-family algorithms would be AlphaZero-style with a trained neural network for both policy and value, but that's a fundamentally different architecture. Concurrent BRS+MCTS via goroutines is blocked by data races on the shared gameSimPool.
+
+### Bottleneck signal anti-correlated with wins (Iter 30)
+Trace analysis of 20 games (120 perspectives) revealed the bottleneck signal (territory behind articulation points) was anti-correlated: winners averaged -0.09 contribution, losers +0.09. The aggressive squeezer pushes into narrow corridors to cut off the opponent, naturally creating more fragile territory for itself. The signal penalized this winning playstyle. Removing it (53%) + adding phase-dependent confinement weights (61%) was the winning combination. Phase-dependent confinement (stronger in late game) targets the dominant failure mode: 70% of deaths are late-game, and confinement is the kill signal.
 
 ### Phase-gating eval cost for depth (Iter 26)
 Skipping Tarjan's AP in early game (`lateBlend < 0.1`) recovers 57% of Voronoi cost (2414ns → 1051ns), translating to ~2 extra search plies. Result: 67% vs v24 — the strongest single-iteration improvement since Iter 8. The skipped signal contributes at most ~1.65 eval points at the threshold — well below noise floor. This confirms that early-game search depth is critical: the engine needs to see territory flips coming, and cheaper eval = more depth = better foresight.

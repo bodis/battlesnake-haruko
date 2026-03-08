@@ -575,3 +575,29 @@ Full `isSafeDir` pruning (walls + body segments) in both `brsMax` and `brsMin`. 
 **Result:** 43% vs v27 (N=100)
 
 Used tail-aware `isSafeDir` for BRS move pruning (replacing `wallSafeMoves` with `safeMoves` that calls `isSafeDir`). Even with correct tail-retraction logic, pruning body-collision moves from BRS is harmful — the search benefits from exploring "unsafe" moves to find optimal responses. Eval-only tail awareness succeeded (61%).
+
+---
+
+### Iteration 30 — Remove Bottleneck Signal + Phase-Dependent Confinement
+
+**Goal:** Data-driven improvement based on v28 trace analysis.
+
+**Trace analysis findings (20 games, 120 perspectives):**
+- Deaths: collision=34 (57%), body-collision=8 (13%), wall-collision=7 (12%), starvation=6 (10%), head-collision=5 (8%)
+- Death phase: early=2, mid=16, late=42 (70% late game)
+- Win types: 100% territory-squeeze (unchanged from Iter 25)
+- StarvationRisk signal: 0.0 for both wins and losses (completely dead — condition too strict)
+- **Bottleneck signal anti-correlated**: -0.09 for wins, +0.09 for losses (wrong direction)
+- Territory dominates eval (90%+ of variance)
+- OppConfinement/SelfConfinement differentiate wins from losses
+
+**What was changed:**
+1. **Removed bottleneck signal** — always skip Tarjan AP in Voronoi (`skipBottleneck=true`). The anti-correlation occurs because aggressive squeezers push into narrow corridors (creating fragile territory for themselves) to cut off opponents. The signal penalized the winning playstyle.
+2. **Phase-dependent confinement weights** — confinement bonuses/penalties now scale with `lateBlend`:
+   - OppConfinement 0 moves: 50 + 25×late (was 50 flat)
+   - OppConfinement 1 move: 15 + 10×late (was 15 flat)
+   - SelfConfinement 0 moves: -(25 + 25×late) (was -25 flat)
+   - SelfConfinement 1 move: -(5 + 10×late) (was -5 flat)
+   - Rationale: 70% of deaths are late-game, and confinement is the kill signal.
+
+**Result:** 61% vs v28 (N=100). ~433 avg turns. Bottleneck-only removal: 53%; both changes together: 61%.

@@ -117,7 +117,9 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 	lateBlend := clamp01((boardFill - 0.30) / 0.20) // 0.0@30%, 1.0@50%+
 
 	// Territory score with phase modulation.
-	vr := VoronoiTerritory(g, myIdx, lateBlend < 0.1)
+	// Always skip Tarjan AP — bottleneck signal was anti-correlated with wins
+	// (winners have more threatened territory due to aggressive squeezing).
+	vr := VoronoiTerritory(g, myIdx, true)
 	if vr.IsPartitioned && lateBlend < 0.5 {
 		lateBlend = 0.5
 	}
@@ -183,28 +185,25 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 			}
 		}
 
-		// Opponent confinement.
+		// Opponent confinement (stronger in late game where confinement kills).
 		switch safeMoveCount(g, opp) {
 		case 0:
-			score += 50.0
+			score += 50.0 + 25.0*lateBlend
 		case 1:
-			score += 15.0
+			score += 15.0 + 10.0*lateBlend
 		}
 	}
 
-	// Self-confinement penalty.
+	// Self-confinement penalty (stronger in late game).
 	switch safeMoveCount(g, me) {
 	case 0:
-		score -= 25.0
+		score -= 25.0 + 25.0*lateBlend
 	case 1:
-		score -= 5.0
+		score -= 5.0 + 10.0*lateBlend
 	}
 
-	// Bottleneck penalty: territory behind exploitable articulation points.
-	if vr.MyThreatenedTerritory > 0 || vr.OppThreatenedTerritory > 0 {
-		wBottleneck := 0.3 * (0.5 + 0.5*lateBlend) // 0.15 early, 0.3 late
-		score += wBottleneck * float64(vr.OppThreatenedTerritory-vr.MyThreatenedTerritory)
-	}
+	// Bottleneck signal removed (Iter 30): anti-correlated with wins.
+	// Winners squeeze aggressively → more threatened territory → signal penalized winning play.
 
 	// Tail chase bonus: reward proximity to own tail when space is tight.
 	if lateBlend > 0 {
@@ -293,7 +292,7 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 	boardFill := float64(totalBody) / float64(g.Width*g.Height)
 	lateBlend := clamp01((boardFill - 0.30) / 0.20)
 
-	vr := VoronoiTerritory(g, myIdx, false)
+	vr := VoronoiTerritory(g, myIdx, true)
 	if vr.IsPartitioned && lateBlend < 0.5 {
 		lateBlend = 0.5
 	}
@@ -360,24 +359,20 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 
 		switch safeMoveCount(g, opp) {
 		case 0:
-			b.OppConfinement += 50.0
+			b.OppConfinement += 50.0 + 25.0*lateBlend
 		case 1:
-			b.OppConfinement += 15.0
+			b.OppConfinement += 15.0 + 10.0*lateBlend
 		}
 	}
 
 	switch safeMoveCount(g, me) {
 	case 0:
-		b.SelfConfinement = -25.0
+		b.SelfConfinement = -(25.0 + 25.0*lateBlend)
 	case 1:
-		b.SelfConfinement = -5.0
+		b.SelfConfinement = -(5.0 + 10.0*lateBlend)
 	}
 
-	// Bottleneck.
-	if vr.MyThreatenedTerritory > 0 || vr.OppThreatenedTerritory > 0 {
-		wBottleneck := 0.3 * (0.5 + 0.5*lateBlend)
-		b.Bottleneck = wBottleneck * float64(vr.OppThreatenedTerritory-vr.MyThreatenedTerritory)
-	}
+	// Bottleneck signal removed (Iter 30): anti-correlated with wins.
 
 	// Tail chase.
 	if lateBlend > 0 {
