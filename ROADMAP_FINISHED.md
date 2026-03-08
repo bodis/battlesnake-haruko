@@ -623,3 +623,26 @@ Used tail-aware `isSafeDir` for BRS move pruning (replacing `wallSafeMoves` with
 - BRS node: 1199ns (was ~1233ns, ~3% faster)
 
 **Result:** 55% vs v17 (N=100), 57% vs v28 (N=100), 52% vs v30 (N=100). ~442 avg turns. First version to pass multi-opponent validation.
+
+---
+
+## Iter 32 — Territory Quality: Connectivity Signal
+
+**Goal:** Add territory connectivity signal to penalize narrow corridor territory and reward wide-open territory. Late-game losses follow a universal pattern: gradual territory erosion into narrow corridors → self-confinement → wall/collision death. Current eval counts all territory cells equally.
+
+**What was done:**
+1. **Added `MyConnectivity`/`OppConnectivity` to `VoronoiResult`** — computed in existing territory counting loop. For each owned cell, count how many of its 4 neighbors have the same owner; divide by territory count for average connectivity. Wide-open territory ~3.0-3.5, narrow corridor ~2.0, dead-end ~1.5.
+2. **Added connectivity signal to `Evaluate()`** — `score += 5.0 * lateBlend * vr.MyConnectivity`. Uses absolute value (not delta) because absolute connectivity teaches the engine to prefer wide positions regardless of opponent. Scaled with lateBlend since territory quality matters most in crowded late game.
+3. **Updated `EvalBreakdown`/`EvaluateDetailed()`** and **trace infrastructure** — `Connectivity` field in breakdown, `MyConnectivity`/`OppConnectivity` raw values in trace records.
+
+**Key insight:** Delta-based connectivity (`MyConnectivity - OppConnectivity`) was neutral in self-play (50-52%) — symmetric like Iter 22's aggression modulation. Absolute MyConnectivity (rewarding our own wide territory regardless of opponent) works because it changes *move preferences* — the engine now prefers wide-open positions over narrow corridors at all depths. This is fundamentally different from symmetric delta signals.
+
+**Weight tuning:**
+- wConnectivity=5.0 (delta): 52%, 50% — neutral
+- wConnectivity=10.0 (delta): 50% — still neutral
+- wConnectivity=5.0 (absolute): **56%, 61%** — strong
+- wConnectivity=8.0 (absolute): 49% — too strong, interferes with territory count
+
+**Benchmark:** Evaluate early game: ~1270ns (+132ns), late game: ~208ns (+13ns). Zero allocs maintained. Well within <200ns budget.
+
+**Result:** 56% and 61% vs v31 (N=100 each). ~443-451 avg turns.

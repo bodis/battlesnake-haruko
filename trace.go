@@ -46,6 +46,9 @@ type traceRecord struct {
 	FoodCluster     float64 `json:"food_cluster,omitempty"`
 	GrowthUrgency   float64 `json:"growth_urgency,omitempty"`
 	TailChase       float64 `json:"tail_chase,omitempty"`
+	Connectivity    float64 `json:"connectivity,omitempty"`
+	MyConnectivity  float64 `json:"my_connectivity,omitempty"`
+	OppConnectivity float64 `json:"opp_connectivity,omitempty"`
 	EarlyBlend      float64 `json:"early_blend,omitempty"`
 	LateBlend       float64 `json:"late_blend,omitempty"`
 
@@ -138,6 +141,9 @@ func traceTurn(gameID, snakeID string, state GameState, sim *logic.GameSim, move
 		FoodCluster:     bd.FoodCluster,
 		GrowthUrgency:   bd.GrowthUrgency,
 		TailChase:       bd.TailChase,
+		Connectivity:    bd.Connectivity,
+		MyConnectivity:  vr.MyConnectivity,
+		OppConnectivity: vr.OppConnectivity,
 		EarlyBlend:      bd.EarlyBlend,
 		LateBlend:       bd.LateBlend,
 	}

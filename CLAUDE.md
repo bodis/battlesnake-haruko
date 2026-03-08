@@ -34,11 +34,11 @@ When finishing an iteration:
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 - Board sizes: 7x7, 11x11, 19x19 all supported. `maxBoardCells=361`. Loops use `Width*Height`, no 11x11 cost.
 
-## Current state (Iter 31 current, Iter 21+22+27partial+28partial+29 dead ends)
-Eval diet: stripped 3 dead signals (FoodReach, FoodDenial, StarvationRisk) + 6 unused Voronoi fields. 55% vs v17, 57% vs v28 (N=100), ~442 avg turns. Late-game eval 20% faster (195ns vs 244ns). First iteration with multi-opponent validation gate.
+## Current state (Iter 32 current, Iter 21+22+27partial+28partial+29 dead ends)
+Territory connectivity signal: absolute MyConnectivity (avg same-owner neighbors per territory cell). 56-61% vs v31 (N=100). ~443-451 avg turns. Eval early ~1270ns (+132ns), late ~208ns (+13ns). Key discovery: delta signals neutral in self-play, absolute signals work.
 
 ## Direction
-Iter 32: Territory quality signal (connectivity — avg same-owner neighbors per territory cell). Depth hypothesis disproved — we reach depth 14 in all games. Problem is eval quality in late game, not search depth. See ROADMAP.md for full plan with code sketches. Algorithm changes (MCTS, hybrid search) ruled out.
+Territory ratio signal, enhanced self-confinement (scale penalty with connectivity), weight recalibration on new eval. See ROADMAP.md for future directions.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.

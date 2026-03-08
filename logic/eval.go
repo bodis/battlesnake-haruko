@@ -126,6 +126,9 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 	wTerritory := 1.5 - 0.3*earlyBlend + 0.45*lateBlend
 	score := wTerritory * float64(vr.MyTerritory-vr.OppTerritory)
 
+	// Territory quality: reward wide-open territory, penalize corridors.
+	score += 5.0 * lateBlend * vr.MyConnectivity
+
 	// Early-game food control (distance-weighted, not flat count).
 	score += 1.0 * earlyBlend * vr.MyFoodValue // wFoodCluster
 
@@ -219,6 +222,7 @@ type EvalBreakdown struct {
 	FoodCluster     float64
 	GrowthUrgency   float64
 	TailChase       float64
+	Connectivity    float64
 	EarlyBlend      float64
 	LateBlend       float64
 }
@@ -271,6 +275,9 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 
 	wTerritory := 1.5 - 0.3*earlyBlend + 0.45*lateBlend
 	b.Territory = wTerritory * float64(vr.MyTerritory-vr.OppTerritory)
+
+	// Territory quality: connectivity.
+	b.Connectivity = 5.0 * lateBlend * vr.MyConnectivity
 
 	// Food cluster.
 	b.FoodCluster = 1.0 * earlyBlend * vr.MyFoodValue
@@ -346,7 +353,7 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 
 	b.Total = b.Territory + b.LenAdvantage + b.H2H + b.OppConfinement +
 		b.SelfConfinement + b.FoodUrgency + b.FoodCluster + b.GrowthUrgency +
-		b.TailChase
+		b.TailChase + b.Connectivity
 
 	return b
 }

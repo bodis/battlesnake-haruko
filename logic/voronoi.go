@@ -55,6 +55,10 @@ type VoronoiResult struct {
 	// Food quality (distance-weighted)
 	MyFoodValue float64 // sum of 1.0/dist for each food we own
 
+	// Territory quality (connectivity: avg same-owner neighbors per cell)
+	MyConnectivity  float64 // higher = wider territory, lower = corridors
+	OppConnectivity float64
+
 	// Bottleneck detection (articulation points in territory subgraph)
 	MyThreatenedTerritory  int // cells behind live APs in our territory
 	OppThreatenedTerritory int // cells behind live APs in opponent territory
@@ -312,17 +316,42 @@ func VoronoiTerritory(g *GameSim, myIdx int, skipBottleneck bool) VoronoiResult 
 		}
 	}
 
-	// Count territory.
+	// Count territory and connectivity (avg same-owner neighbors per cell).
 	var result VoronoiResult
+	var myNeighborSum, oppNeighborSum int
 	for i := 0; i < size; i++ {
 		o := ws.owner[i]
-		if o > 0 {
-			if o == myTag {
-				result.MyTerritory++
-			} else {
-				result.OppTerritory++
-			}
+		if o <= 0 {
+			continue
 		}
+		x := i % g.Width
+		y := i / g.Width
+		neighbors := 0
+		if x > 0 && ws.owner[i-1] == o {
+			neighbors++
+		}
+		if x < g.Width-1 && ws.owner[i+1] == o {
+			neighbors++
+		}
+		if y > 0 && ws.owner[i-g.Width] == o {
+			neighbors++
+		}
+		if y < g.Height-1 && ws.owner[i+g.Width] == o {
+			neighbors++
+		}
+		if o == myTag {
+			result.MyTerritory++
+			myNeighborSum += neighbors
+		} else {
+			result.OppTerritory++
+			oppNeighborSum += neighbors
+		}
+	}
+	if result.MyTerritory > 0 {
+		result.MyConnectivity = float64(myNeighborSum) / float64(result.MyTerritory)
+	}
+	if result.OppTerritory > 0 {
+		result.OppConnectivity = float64(oppNeighborSum) / float64(result.OppTerritory)
 	}
 
 	// Count food ownership.

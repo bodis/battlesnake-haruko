@@ -55,6 +55,7 @@ HTTP request (GameState JSON)
 | Food cluster value | `1.0 × early` | Distance-weighted food quality (sum 1/dist), early game |
 | Growth urgency | `0.3 × early` | Penalty when snake length < expected for turn |
 | Tail chase | `5.0 × late` | Reward proximity to own tail when space is tight |
+| Territory connectivity | `5.0 × late` | Absolute MyConnectivity — avg same-owner neighbors per territory cell (wide=3.5, corridor=2.0) |
 | ~~Food reach~~ | ~~removed (Iter 31)~~ | ~~Opponent's closest food dist minus ours~~ — near zero contribution |
 | ~~Food denial~~ | ~~removed (Iter 31)~~ | ~~Bonus when opponent has 0 food~~ — completely dead |
 | ~~Starvation risk~~ | ~~removed (Iter 31)~~ | ~~Penalty when we have 0 food~~ — completely dead |
@@ -75,6 +76,7 @@ Multi-source BFS from all alive heads. Body segments block, tails are passable. 
 - `MyFood`, `OppFood` — food ownership
 - `IsPartitioned` — our wavefront never met opponent's
 - `MyFoodValue` — sum of 1/dist for owned food (cluster quality)
+- `MyConnectivity`, `OppConnectivity` — avg same-owner neighbors per territory cell (quality metric)
 - `MyThreatenedTerritory`, `OppThreatenedTerritory` — cells behind live articulation points (Tarjan's, gated by `skipBottleneck`)
 
 Zero-alloc (workspace pooled). ~1055ns per call. Bottleneck detection (Tarjan's AP) is available but always skipped in eval since Iter 30 (anti-correlated with wins). Infrastructure retained for future experimentation. Iter 31 stripped unused fields (centroids, depth, tail reachability, closest food distances).
@@ -95,8 +97,8 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 |-----------|------|--------|
 | CloneFromPool | 19ns | 0 |
 | Step | 49ns | 0 |
-| Evaluate (early game) | ~1138ns | 0 |
-| Evaluate (late game) | ~195ns | 0 |
+| Evaluate (early game) | ~1270ns | 0 |
+| Evaluate (late game) | ~208ns | 0 |
 | BRS node (Clone+Step+Eval) | ~1199ns early | 0 |
 
 ## Version History
@@ -125,6 +127,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 29 | Hybrid BRS+MCTS root-level vote | ❌ Dead end (2–46%) |
 | 30 | Remove bottleneck + phase-dependent confinement | 61% vs v28, ~433 avg turns |
 | 31 | Eval diet: strip 3 dead signals + 6 Voronoi fields | 55% vs v17, 57% vs v28, ~442 avg turns |
+| 32 | Territory connectivity signal (absolute MyConnectivity) | 56-61% vs v31, ~443-451 avg turns |
 
 ## Dead Ends
 
@@ -201,6 +204,9 @@ Trace analysis of 20 games (120 perspectives) revealed the bottleneck signal (te
 
 ### Trace statistics can mislead about signal importance (Iter 31)
 TailChase showed δ=0.00 between wins and losses in trace analysis, suggesting it was dead. Removing it dropped v17 win rate from 55% to 44%. The signal has low *average* contribution but high *conditional* importance in specific late-game survival situations. Multi-opponent A/B testing is essential — aggregate trace statistics alone can't identify signals that matter only in critical moments.
+
+### Absolute signals beat delta signals in self-play (Iter 32)
+Connectivity delta (MyConnectivity - OppConnectivity) was neutral in self-play (50-52%), just like Iter 22's aggression modulation. Absolute MyConnectivity (rewarding our own wide territory regardless of opponent) won 56-61%. In self-play where both sides share the same eval, delta signals cancel out symmetrically. Absolute signals change move preferences asymmetrically because positions differ.
 
 ### Phase-gating eval cost for depth (Iter 26)
 Skipping Tarjan's AP in early game (`lateBlend < 0.1`) recovers 57% of Voronoi cost (2414ns → 1051ns), translating to ~2 extra search plies. Result: 67% vs v24 — the strongest single-iteration improvement since Iter 8. The skipped signal contributes at most ~1.65 eval points at the threshold — well below noise floor. This confirms that early-game search depth is critical: the engine needs to see territory flips coming, and cheaper eval = more depth = better foresight.
