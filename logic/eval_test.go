@@ -459,10 +459,8 @@ func TestEval_BottleneckRemoved(t *testing.T) {
 		Turn: 100,
 	}
 
-	bdCorridor := EvaluateDetailed(gCorridor, 0)
-	if bdCorridor.Bottleneck != 0 {
-		t.Errorf("bottleneck signal should be zero after removal, got %f", bdCorridor.Bottleneck)
-	}
+	// Verify EvaluateDetailed still works without dead signals.
+	_ = EvaluateDetailed(gCorridor, 0)
 
 	// Verify VoronoiTerritory still detects threatened territory when asked.
 	vr := VoronoiTerritory(gCorridor, 0, false)

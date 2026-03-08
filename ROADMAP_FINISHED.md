@@ -601,3 +601,25 @@ Used tail-aware `isSafeDir` for BRS move pruning (replacing `wallSafeMoves` with
    - Rationale: 70% of deaths are late-game, and confinement is the kill signal.
 
 **Result:** 61% vs v28 (N=100). ~433 avg turns. Bottleneck-only removal: 53%; both changes together: 61%.
+
+---
+
+## Iter 31 — Eval Diet: Strip Dead Signals + Unused Voronoi Fields
+
+**Goal:** Strip dead eval signals and unused Voronoi fields to recover search depth. First iteration with multi-opponent validation gate (must beat both v17 >55% and v28 >55%).
+
+**What was done:**
+1. **Removed 3 dead signals from `Evaluate()`** — FoodReach, FoodDenial, StarvationRisk (all δ < 0.05 between wins/losses, zero contribution in trace data).
+2. **Stripped 6 unused `VoronoiResult` fields** — `MyTerritoryDepth`, `MyCenterX/Y`, `OppCenterX/Y`, `MyTailReachable`, `MyClosestFoodDist`, `OppClosestFoodDist`. Removed their computation from `VoronoiTerritory()`.
+3. **Kept TailChase** — initially removed (plan classified it as dead, δ=0.00), but A/B testing showed removing it hurt significantly (44% vs v17). Restored — it provides meaningful late-game survival guidance despite low average contribution.
+4. **Updated tracing infrastructure** — `EvalBreakdown`, `traceRecord`, `cmd/analyze/main.go` all slimmed to match.
+
+**Key insight:** TailChase's trace analysis (δ=0.00) was misleading — the signal has low *average* contribution but high *conditional* importance in late-game confinement scenarios. Low average δ between wins and losses doesn't mean a signal is dead; it may be critical in specific situations that determine outcomes. Always A/B test signal removal; don't rely solely on aggregate trace statistics.
+
+**Benchmark improvements:**
+- Evaluate (late game): 194.6ns (was ~244ns, **20% faster**)
+- Evaluate (early game): 1138ns (was ~1163ns, ~2% faster)
+- Voronoi: 1055ns (was ~1090ns, ~3% faster)
+- BRS node: 1199ns (was ~1233ns, ~3% faster)
+
+**Result:** 55% vs v17 (N=100), 57% vs v28 (N=100), 52% vs v30 (N=100). ~442 avg turns. First version to pass multi-opponent validation.

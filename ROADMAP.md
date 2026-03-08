@@ -10,11 +10,10 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iterations 1-20, 23-28, 30 (see ROADMAP_FINISHED.md) |
+| **Completed** | Iterations 1-20, 23-28, 30-31 (see ROADMAP_FINISHED.md) |
 | **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%), Iter 28 partial (tail-aware BRS pruning: 43%), Iter 29 (hybrid BRS+MCTS: 2–46%) |
-| **Next** | Iter 31 — Cross-version regression analysis + eval diet |
-| **Current** | v30 Remove bottleneck + phase-dependent confinement; 61% vs v28 (N=100); ~433 avg turns |
-| **Key insight** | v30 loses to v17 (49%) despite 13 iterations of improvements. Hill-climbing against previous version doesn't guarantee overall strength. Eval complexity costs search depth. |
+| **Current** | v31 Eval diet: strip 3 dead signals + 6 Voronoi fields; 55% vs v17, 57% vs v28 (N=100); ~442 avg turns |
+| **Key insight** | Multi-opponent validation gate works: TailChase appeared dead in trace data (δ=0.00) but removing it dropped v17 win rate from 55% to 44%. Low average signal contribution ≠ unimportant. |
 
 ---
 
@@ -38,155 +37,208 @@
 
 ---
 
-## Iter 31 — Cross-Version Regression Analysis + Eval Diet
+## Iter 32 — Territory Quality: Connectivity + Squeeze Detection
 
-**Goal:** Understand why v30 (13 iterations of improvements) can't beat v17, and build a leaner eval that's stronger against diverse opponents — not just the previous version.
+**Goal:** Replace raw territory count with a quality-aware territory signal. The #1 differentiator between wins and losses is territory *trend* (wins: +10 to +30, losses: -47 to -62 in late game), not territory *count*. Current eval counts all territory cells equally — 30 cells in wide-open space and 30 cells behind a 1-cell corridor score the same. This iteration adds territory quality measurement to break the hill-climbing plateau.
 
-### Problem: Hill-Climbing Trap
+**Why this should work:** Depth 14 analysis (Iter 31 traces) proved the depth hypothesis was wrong — we reach depth 14 in both wins and losses. The problem isn't search depth, it's eval quality in the late game. Late-game losses follow a universal pattern: gradual territory erosion → self-confinement → forced into wall/collision. This happens over 100+ turns, well beyond search horizon. Better eval scoring of territory *quality* should make the engine avoid narrow-corridor positions before the slow squeeze begins.
 
-Cross-version testing revealed that iterative improvements against the previous version haven't translated to overall strength:
+**Acceptable depth trade-off:** Losing 1 ply (depth 14→13) for a ~100-200ns territory quality signal is acceptable. All deaths happen well beyond the search horizon. The 14th ply can't save us from a 100-turn positional squeeze; better eval at depth 13 can.
 
-| v30 vs | Iter | Gap | v30 Win% | N |
-|--------|------|-----|----------|---|
-| v7 (Voronoi eval) | 7 | 23 versions | **94%** | 50 |
-| v9 (iterative deepening) | 9 | 21 versions | **68%** | 50 |
-| v11 (TT + Zobrist) | 11 | 19 versions | **56%** | 50 |
-| v17 (phase-adaptive eval) | 17 | 13 versions | **49%** | 100 |
-| v20 (food strategy) | 20 | 10 versions | **64%** | 50 |
-| v28 (previous) | 28 | 2 versions | **61%** | 100 |
+### Evidence from Iter 31 Trajectory Analysis
 
-**v17 is tied with v30 despite having 13 fewer iterations.** And v20 is harder to beat (64%) than v28 (61%).
+**Traced 20 games each against v17, v28, v30. Key findings:**
 
-### Root Cause Hypothesis: Eval Bloat → Depth Loss
+1. **Early/mid game (turn 0-250) is identical** between wins and losses. Territory, eval, length advantage — all nearly the same. The game is decided purely in the late game.
 
-v17 has a radically simpler eval:
-- **6 signals:** territory, food count (flat), length, H2H, opp confinement, food urgency
-- **No:** food cluster, food reach, food denial, starvation risk, growth urgency, tail chase, self-confinement, bottleneck
-- **Voronoi:** 5 result fields (161 lines) vs v30's 15+ fields (424 lines, though Tarjan now skipped)
-- **safeMoveCount:** 1 call (opp only) vs v30's 2 calls (opp + self)
-- **Weights:** lower (territory 1.0 vs 1.5, length 2.0 vs 3.0, H2H 5.0 vs 8.0)
+2. **Late-game territory trend is the #1 predictor:**
+   - vs v17: wins +29.8 trend, losses -61.9 trend (delta: 91.7)
+   - vs v28: wins +10.7 trend, losses -47.3 trend (delta: 58.0)
+   - vs v30: wins -18.2 trend, losses -61.4 trend (delta: 43.1)
 
-The cheaper eval means v17 searches deeper within the same 300ms budget. Since 70% of deaths are sudden territory flips beyond the search horizon, **extra depth to foresee these flips may matter more than extra eval signals to score them**.
+3. **Self-confinement events (turns with ≤1 safe move) are 2x higher in losses:**
+   - vs v17: wins 8.6/game, losses 15.0/game
+   - vs v28: wins 9.7/game, losses 23.3/game
+   - vs v30: wins 16.9/game, losses 28.1/game
 
-### Why v30 beats v28 but not v17
+4. **Partitioned games (fully cut off) are more common in losses:**
+   - Wins: 19-21% of late-game turns partitioned
+   - Losses: 24-33% of late-game turns partitioned
 
-Each iteration A/B tests against the immediately previous version. Both sides share the same eval structure, so improvements in signal quality are visible: the better-calibrated eval scores positions more accurately, and BRS exploits this.
+5. **100% of deaths are turn 300+, 100% are collision/wall-collision** — slow positional death, never sudden mistakes.
 
-But against a **structurally different opponent** (v17), the game plays out differently:
-- v17 searches deeper → sees territory flips earlier → avoids traps v30 walks into
-- v17's simpler eval produces different move preferences → v30's signals are calibrated for v30-vs-v30 games, not v30-vs-v17 games
-- The signals added in Iter 20-28 may be locally optimal (beat prev version) but globally harmful (lose depth against everyone else)
+6. **All opponents show same pattern** — this is a structural weakness in our eval, not opponent-specific.
 
-### Phase 1: Measure the Depth Gap
+### Trace data location
 
-**Step 1: Benchmark v17 eval cost**
-```bash
-# Build v17 in a temp directory, run benchmarks
-git stash && git checkout ea8e2d7 -- logic/eval.go logic/voronoi.go
-go test ./logic -bench BenchmarkEvaluate -benchtime 5s
-# Then restore
-git checkout HEAD -- logic/eval.go logic/voronoi.go && git stash pop
-```
-This won't work cleanly (API differences), so instead:
+Traced games from Iter 31 analysis are stored in:
+- `traces/vs-v17/` — 20 games (10W/10L, N=20)
+- `traces/vs-v28/` — 20 games (6W/14L, N=20)
+- `traces/vs-v30/` — 20 games (12W/8L, N=20)
 
-**Step 1 (alternative): Add a v17-style "lean eval" benchmark**
-Create `BenchmarkEvaluateLean` that mimics v17's eval cost structure — call `VoronoiTerritory` with minimal field computation, skip self-confinement, skip food denial/starvation/growth/tail signals. Compare ns/op to understand exactly how many nanoseconds we're spending on the added signals.
+Analyze with: `go run ./cmd/analyze -mode trajectories traces/vs-v17/*.jsonl`
 
-**Step 2: Measure actual search depth in games**
-```bash
-make trace N=20   # v30 traces already exist
-```
-Check depth-per-turn in v30 traces. Then run v17 with tracing to compare depth-per-turn.
+### Step 1: Territory Connectivity Signal
 
-**Step 3: Profile which eval components cost the most**
-Add optional timing to `Evaluate()` — measure Voronoi call, safeMoveCount calls, and signal arithmetic separately. Run for 1000 evals to get stable averages.
+**Concept:** During the existing Voronoi territory counting loop (`voronoi.go`, territory counting section ~lines 327-340), for each cell we own, count how many of its 4 neighbors are also ours. Sum this and divide by territory count to get average connectivity.
 
-### Phase 2: Signal Audit — Keep or Kill
+- Wide-open territory: ~3.0-3.5 avg neighbors (interior cells have 4, edge cells have 2-3)
+- Narrow corridor: ~2.0 avg neighbors (each cell has mostly 2 neighbors: forward and backward)
+- Dead-end pocket: ~1.5 avg neighbors
 
-For each signal added since v17, determine: does it provide enough eval accuracy to justify its depth cost?
+**Implementation in `voronoi.go`:**
 
-| Signal | Added in | Iter 30 signal analysis | Verdict |
-|--------|----------|------------------------|---------|
-| Food cluster (distance-weighted) | Iter 20 | +0.39 wins / +0.34 losses (δ=0.05) | **Suspect** — barely differentiates |
-| Food reach advantage | Iter 20 | +0.02 / -0.02 (δ=0.04) | **Kill** — near zero contribution |
-| Food denial | Iter 20 | +0.00 / +0.00 (δ=0.00) | **Kill** — completely dead |
-| Starvation risk | Iter 20 | -0.00 / -0.00 (δ=0.00) | **Kill** — completely dead |
-| Growth urgency | Iter 20 | -0.65 / -0.56 (δ=0.09) | **Suspect** — moderate, but only early game |
-| Self-confinement | Iter 8 (added), Iter 30 (phased) | -0.24 / -0.37 (δ=0.13) | **Keep** — differentiates wins/losses |
-| Tail chase | Iter 24 | +0.01 / +0.01 (δ=0.00) | **Kill** — near zero contribution |
-| Opp confinement (phase) | Iter 30 | +1.00 / +0.70 (δ=0.30) | **Keep** — strong differentiator |
-| Bottleneck | Iter 23 (removed Iter 30) | already removed | — |
+```go
+// In VoronoiResult, add:
+MyConnectivity  float64 // avg neighbor count for our territory cells (higher = wider territory)
+OppConnectivity float64 // same for opponent
 
-**Dead signals (zero contribution):** FoodDenial, StarvationRisk, TailChase, FoodReach
-**Suspect signals (minimal contribution):** FoodCluster, GrowthUrgency
-**Valuable signals (clear differentiation):** Territory, OppConfinement, SelfConfinement, LenAdvantage, H2H
-
-### Phase 3: Build & Test Lean Eval
-
-**Step 1: Create "v30-lean" — strip dead signals**
-Remove FoodDenial, StarvationRisk, TailChase, FoodReach from `Evaluate()`. These contribute <0.05 eval points difference between wins and losses. Zero gameplay impact, pure cost savings.
-
-**Step 2: Measure depth recovery**
-Benchmark v30-lean vs v30. Even small savings (50-100ns) compound over millions of BRS nodes.
-
-**Step 3: Consider stripping Voronoi fat**
-v30's `VoronoiTerritory` computes `MyFoodValue`, `MyClosestFoodDist`, `OppClosestFoodDist`, `MyTerritoryDepth`, `MyCenterX/Y`, `OppCenterX/Y`, `MyTailReachable` — but many of these are only used by the dead signals. If we kill FoodReach, we don't need `MyClosestFoodDist`/`OppClosestFoodDist`. If we kill FoodCluster, we don't need `MyFoodValue`. Strip unused Voronoi fields → faster BFS.
-
-**Step 4: A/B test the lean eval**
-```bash
-make snapshot                                    # capture v30
-# implement lean eval
-make compare PREV=snapshots/haruko-<v30> N=100   # vs v30
-make compare PREV=snapshots/haruko-ea8e2d7 N=100 # vs v17
-make compare PREV=snapshots/haruko-a989fbb N=100 # vs v20
+// In the territory counting loop:
+var myNeighborSum, oppNeighborSum int
+for i := 0; i < size; i++ {
+    o := ws.owner[i]
+    if o <= 0 { continue }
+    // Count same-owner neighbors
+    x := i % g.Width
+    y := i / g.Width
+    neighbors := 0
+    if x > 0 && ws.owner[i-1] == o { neighbors++ }
+    if x < g.Width-1 && ws.owner[i+1] == o { neighbors++ }
+    if y > 0 && ws.owner[i-g.Width] == o { neighbors++ }
+    if y < g.Height-1 && ws.owner[i+g.Width] == o { neighbors++ }
+    if o == myTag {
+        result.MyTerritory++
+        myNeighborSum += neighbors
+    } else {
+        result.OppTerritory++
+        oppNeighborSum += neighbors
+    }
+}
+if result.MyTerritory > 0 {
+    result.MyConnectivity = float64(myNeighborSum) / float64(result.MyTerritory)
+}
+// same for opp
 ```
 
-**Target:** Beat v17 (>55%) AND beat v28 (>55%) simultaneously. This proves the lean eval is stronger overall, not just against one opponent.
+**Cost:** 4 comparisons + 4 additions per territory cell. Estimated ~30-50ns per Voronoi call on 11x11 board. Very cheap.
 
-### Phase 4: Weight Recalibration on Lean Eval
-
-After stripping dead signals, the remaining weights (territory, length, H2H, confinement) may need adjustment. The weight ratios change when signals are removed.
-
-**Method:** Vary each remaining weight ±50%, test at N=50 against v17 (not v30 — this breaks the hill-climbing trap).
-
-### Phase 5: Validate Against Multiple Opponents
-
-Final validation must pass ALL of:
-```bash
-make compare PREV=snapshots/haruko-ea8e2d7 N=100  # vs v17: must be >55%
-make compare PREV=snapshots/haruko-a989fbb N=100  # vs v20: must be >60%
-make compare PREV=snapshots/haruko-c77fa1f N=100  # vs v28/v30: must be >55%
+**In `eval.go`:** Add a connectivity signal:
+```go
+// Territory quality: penalize narrow corridor territory, reward wide-open territory
+// Connectivity ranges from ~1.5 (dead end) to ~3.5 (wide open)
+// Neutral point around 2.5 — below that, territory is fragile
+connectivityDelta := vr.MyConnectivity - vr.OppConnectivity
+score += wConnectivity * lateBlend * connectivityDelta
 ```
 
-If any test fails, the change is rejected. This ensures we're building a **generally stronger** player, not one that beats a specific opponent.
+Scale with `lateBlend` because early-game territory is fluid and connectivity doesn't matter yet. Start with `wConnectivity = 3.0-5.0` (similar weight to TailChase).
+
+### Step 2: Squeeze Momentum Signal
+
+**Concept:** Reward positions where our territory is stable/growing and opponent's is shrinking. This captures the "slow squeeze" pattern that decides games.
+
+**Implementation:** This is tricky because eval sees only a single position. But within BRS search, each node's eval is compared against alpha/beta from parent nodes. The search already implicitly values positions where our territory grows.
+
+**Alternative approach — territory ratio instead of delta:**
+Instead of `MyTerritory - OppTerritory` (current), use a ratio-based signal: `MyTerritory / (MyTerritory + OppTerritory)`. This naturally captures squeeze dynamics:
+- 50/50 territory = 0.5 (neutral)
+- 60/40 territory = 0.6 (dominant)
+- 30/70 territory = 0.3 (losing)
+
+The ratio signal is more meaningful than absolute delta because a 10-cell advantage on a crowded board is worth more than on an open board. This is almost free — just changes the arithmetic in eval, no new data needed.
+
+**In `eval.go`:** Replace or supplement the territory delta:
+```go
+totalTerritory := vr.MyTerritory + vr.OppTerritory
+if totalTerritory > 0 {
+    territoryRatio := float64(vr.MyTerritory) / float64(totalTerritory)
+    // 0.5 = neutral, >0.5 = advantage, <0.5 = disadvantage
+    // Scale to eval range: ratio 0.6 → score +10, ratio 0.4 → score -10
+    score += wTerritoryRatio * (territoryRatio - 0.5) * 100
+}
+```
+
+### Step 3: Head Escape Routes
+
+**Concept:** From our head, count how many of the 4 directions lead to cells we own (our Voronoi territory). If only 1 direction leads to our territory, we're in a corridor facing a dead end. If 3-4 directions lead to our territory, we have options.
+
+**Implementation in `eval.go`** (not Voronoi — uses the VoronoiResult owner data indirectly):
+
+Actually, this can be approximated cheaply: after Voronoi, check how many safe moves lead to cells in our territory. This combines `isSafeDir` with Voronoi ownership. But we don't have per-cell ownership in eval...
+
+**Alternative: use `safeMoveCount` as a proxy.** We already compute `safeMoveCount(g, me)` — this counts moves that don't hit walls or bodies. In late game with large snakes, safe moves that lead into our own territory are the ones that matter. The current self-confinement signal already captures this (0 or 1 safe moves = penalty).
+
+**Better approach:** Enhance the self-confinement signal to be more granular. Currently it's binary (0 moves → big penalty, 1 move → medium penalty, 2+ → nothing). Make it continuous and scale with territory connectivity:
+```go
+safeMoves := safeMoveCount(g, me)
+if safeMoves <= 2 {
+    selfConfinePenalty := (3.0 - float64(safeMoves)) * (5.0 + 10.0*lateBlend)
+    if vr.MyConnectivity < 2.5 { // narrow territory amplifies confinement danger
+        selfConfinePenalty *= 1.5
+    }
+    score -= selfConfinePenalty
+}
+```
+
+### Step 4: Implementation Order
+
+1. **Add `MyConnectivity`/`OppConnectivity` to `VoronoiResult`** and compute in territory loop
+2. **Add connectivity signal to `Evaluate()`** — weighted by `lateBlend`
+3. **Benchmark** — verify eval cost increase is <200ns
+4. **A/B test connectivity alone** at N=100 vs v17, v28, v30
+5. **If connectivity passes:** add territory ratio signal, test again
+6. **If connectivity fails:** try head escape routes or enhanced self-confinement instead
+7. **Multi-opponent validation gate (same as Iter 31):** must beat v17 >55% AND v28 >55%
+
+### Step 5: Tuning Approach
+
+Test connectivity weight at 3.0, 5.0, 8.0 against v17 (not v30 — breaks hill-climbing trap). The weight that beats v17 most consistently is correct.
+
+If territory ratio signal is added, test independently first, then combined.
+
+### Step 6: Iteration Completion
+
+Standard workflow:
+1. `make compare PREV=snapshots/haruko-ea8e2d7 N=100` — vs v17 (must >55%)
+2. `make compare PREV=snapshots/haruko-c77fa1f N=100` — vs v28 (must >55%)
+3. Move iteration to ROADMAP_FINISHED.md
+4. Update ENGINE.md, CLAUDE.md
 
 ### Critical Files
-- `logic/eval.go` — strip dead signals, slim down Evaluate()
-- `logic/voronoi.go` — remove unused VoronoiResult fields and their computation
-- `logic/bench_test.go` — add lean eval benchmark, depth comparison
+
+| File | Changes |
+|------|---------|
+| `logic/voronoi.go` | Add `MyConnectivity`/`OppConnectivity` to `VoronoiResult`, compute in territory loop |
+| `logic/eval.go` | Add connectivity signal, possibly territory ratio, enhanced self-confinement |
+| `logic/eval.go` | Update `EvaluateDetailed` and `EvalBreakdown` to include new signals |
+| `trace.go` | Add new signal fields to `traceRecord` |
+| `cmd/analyze/main.go` | Add new signals to analysis |
 
 ### Constraints
-- Do NOT change search mechanics (BRS, TT, killers, wall pruning all stay)
-- Do NOT add new signals — this iteration is about REMOVING complexity
-- Do NOT change the Voronoi BFS algorithm — only strip unused result fields
-- Keep `EvaluateDetailed` and `VoronoiResult` struct fields for tracing (can skip computation when `skipBottleneck=true` already gates Tarjan)
-- isSafeDir tail-awareness stays (it's in the eval hot path and proven at 61%)
+- Territory connectivity must be computed in the existing territory loop (no second pass)
+- Total eval cost increase must be <200ns (acceptable: depth 14→13)
+- Do NOT change search mechanics
+- Multi-opponent validation gate is mandatory
+- `cmd/analyze -mode trajectories` is available for per-phase analysis of results
 
-### Success Criteria
-v30-lean must beat BOTH v17 (>55%) and v28 (>55%) at N=100. This is the first iteration with a multi-opponent validation gate.
+### What NOT to try (known dead ends)
+- Explicit positional signals (center/edge) — Iter 21 proved these double-count Voronoi (37-48%)
+- Aggression modulation — Iter 22 proved ineffective in self-play (42-49%)
+- Full Tarjan's AP — Iter 30 proved anti-correlated with wins
+- Body-collision pruning — Iter 27/28 proved harmful to search (32-43%)
 
 ---
 
-## Future Directions (After Iter 31)
+## Future Directions (After Iter 32)
 
-**Split bottleneck into offensive/defensive:**
-Iter 30 removed bottleneck entirely. Concept may work as offensive-only: `OppThreatenedTerritory` reward with no defensive penalty.
+**Weight recalibration on quality eval:**
+After adding connectivity signal, all weights may need recalibration. Test against v17.
 
-**Weight recalibration on lean eval:**
-If Iter 31 strips signals, remaining weights need recalibration against v17 (not self-play).
+**Opponent squeeze reward:**
+If connectivity works, consider rewarding positions where opponent connectivity is *decreasing* (we're squeezing their corridors).
 
-**Fix starvation risk (if kept):**
-Condition `MyFood==0 && Health<50` too strict. Better: health-to-food-distance ratio.
+**Adaptive time management:**
+Allocate more search time when territory connectivity is low (critical positions) and less when connectivity is high (stable positions).
 
 ---
 
@@ -208,3 +260,4 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | 28 | `snapshots/haruko-tailaware` | ~436 | Tail-aware isSafeDir; 61% vs v27 |
 | 29 | — | — | ❌ Dead end: hybrid BRS+MCTS (2–46%) |
 | 30 | `snapshots/haruko-c77fa1f` | ~433 | Remove bottleneck + phase confinement; 61% vs v28 |
+| 31 | `snapshots/haruko-e7f195f` | ~442 | Eval diet: strip dead signals + Voronoi fields; 55% vs v17, 57% vs v28 |

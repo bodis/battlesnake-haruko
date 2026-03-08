@@ -44,14 +44,8 @@ type traceRecord struct {
 	SelfConfinement float64 `json:"self_confinement,omitempty"`
 	FoodUrgency     float64 `json:"food_urgency,omitempty"`
 	FoodCluster     float64 `json:"food_cluster,omitempty"`
-	FoodReach       float64 `json:"food_reach,omitempty"`
-	FoodDenial      float64 `json:"food_denial,omitempty"`
-	StarvationRisk  float64 `json:"starvation_risk,omitempty"`
 	GrowthUrgency   float64 `json:"growth_urgency,omitempty"`
 	TailChase       float64 `json:"tail_chase,omitempty"`
-	Bottleneck      float64 `json:"bottleneck,omitempty"`
-	MyThreatened    int     `json:"my_threatened,omitempty"`
-	OppThreatened   int     `json:"opp_threatened,omitempty"`
 	EarlyBlend      float64 `json:"early_blend,omitempty"`
 	LateBlend       float64 `json:"late_blend,omitempty"`
 
@@ -111,7 +105,7 @@ func traceTurn(gameID, snakeID string, state GameState, sim *logic.GameSim, move
 	}
 
 	bd := logic.EvaluateDetailed(sim, myIdx)
-	vr := logic.VoronoiTerritory(sim, myIdx, false)
+	vr := logic.VoronoiTerritory(sim, myIdx, true)
 
 	oppLen := 0
 	for i := range sim.Snakes {
@@ -142,14 +136,8 @@ func traceTurn(gameID, snakeID string, state GameState, sim *logic.GameSim, move
 		SelfConfinement: bd.SelfConfinement,
 		FoodUrgency:     bd.FoodUrgency,
 		FoodCluster:     bd.FoodCluster,
-		FoodReach:       bd.FoodReach,
-		FoodDenial:      bd.FoodDenial,
-		StarvationRisk:  bd.StarvationRisk,
 		GrowthUrgency:   bd.GrowthUrgency,
 		TailChase:       bd.TailChase,
-		Bottleneck:      bd.Bottleneck,
-		MyThreatened:    vr.MyThreatenedTerritory,
-		OppThreatened:   vr.OppThreatenedTerritory,
 		EarlyBlend:      bd.EarlyBlend,
 		LateBlend:       bd.LateBlend,
 	}

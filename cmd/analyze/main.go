@@ -39,14 +39,8 @@ type record struct {
 	SelfConfinement float64 `json:"self_confinement"`
 	FoodUrgency     float64 `json:"food_urgency"`
 	FoodCluster     float64 `json:"food_cluster"`
-	FoodReach       float64 `json:"food_reach"`
-	FoodDenial      float64 `json:"food_denial"`
-	StarvationRisk  float64 `json:"starvation_risk"`
 	GrowthUrgency   float64 `json:"growth_urgency"`
 	TailChase       float64 `json:"tail_chase"`
-	Bottleneck      float64 `json:"bottleneck"`
-	MyThreatened    int     `json:"my_threatened"`
-	OppThreatened   int     `json:"opp_threatened"`
 	EarlyBlend      float64 `json:"early_blend"`
 	LateBlend       float64 `json:"late_blend"`
 
@@ -120,15 +114,11 @@ func classifyWin(g game) string {
 
 	territoryGroup := math.Abs(last.Territory) + math.Abs(last.OppConfinement)
 	h2hGroup := math.Abs(last.H2H)
-	starvGroup := math.Abs(last.FoodDenial) + math.Abs(last.FoodReach) + math.Abs(last.StarvationRisk)
 
-	if territoryGroup >= h2hGroup && territoryGroup >= starvGroup {
+	if territoryGroup >= h2hGroup {
 		return "territory-squeeze"
 	}
-	if h2hGroup >= territoryGroup && h2hGroup >= starvGroup {
-		return "h2h-kill"
-	}
-	return "starvation-kill"
+	return "h2h-kill"
 }
 
 func modeSummary(games []game) {
@@ -272,12 +262,8 @@ func modeTurningPoints(games []game, threshold float64, top int) {
 				{"SelfConfinement", g.turns[i].SelfConfinement - g.turns[i-1].SelfConfinement},
 				{"FoodUrgency", g.turns[i].FoodUrgency - g.turns[i-1].FoodUrgency},
 				{"FoodCluster", g.turns[i].FoodCluster - g.turns[i-1].FoodCluster},
-				{"FoodReach", g.turns[i].FoodReach - g.turns[i-1].FoodReach},
-				{"FoodDenial", g.turns[i].FoodDenial - g.turns[i-1].FoodDenial},
-				{"StarvationRisk", g.turns[i].StarvationRisk - g.turns[i-1].StarvationRisk},
 				{"GrowthUrgency", g.turns[i].GrowthUrgency - g.turns[i-1].GrowthUrgency},
 				{"TailChase", g.turns[i].TailChase - g.turns[i-1].TailChase},
-				{"Bottleneck", g.turns[i].Bottleneck - g.turns[i-1].Bottleneck},
 			}
 			sort.Slice(deltas, func(a, b int) bool {
 				return math.Abs(deltas[a].delta) > math.Abs(deltas[b].delta)
@@ -367,7 +353,7 @@ func modeDeaths(games []game, top int) {
 			{"len_adv", g.turns[start].LenAdvantage, 0},
 			{"h2h", g.turns[start].H2H, 0},
 			{"confine", g.turns[start].OppConfinement + g.turns[start].SelfConfinement, 0},
-			{"food", g.turns[start].FoodUrgency + g.turns[start].FoodCluster + g.turns[start].FoodReach, 0},
+			{"food", g.turns[start].FoodUrgency + g.turns[start].FoodCluster, 0},
 		}
 
 		for _, t := range g.turns[start:] {
@@ -381,7 +367,7 @@ func modeDeaths(games []game, top int) {
 		sigs[1].lastVal = last.LenAdvantage
 		sigs[2].lastVal = last.H2H
 		sigs[3].lastVal = last.OppConfinement + last.SelfConfinement
-		sigs[4].lastVal = last.FoodUrgency + last.FoodCluster + last.FoodReach
+		sigs[4].lastVal = last.FoodUrgency + last.FoodCluster
 
 		// Find biggest drop.
 		biggestName := ""
@@ -441,7 +427,7 @@ func modeWins(games []game, top int) {
 			{"len_adv", g.turns[start].LenAdvantage, 0},
 			{"h2h", g.turns[start].H2H, 0},
 			{"confine", g.turns[start].OppConfinement + g.turns[start].SelfConfinement, 0},
-			{"food", g.turns[start].FoodUrgency + g.turns[start].FoodCluster + g.turns[start].FoodReach, 0},
+			{"food", g.turns[start].FoodUrgency + g.turns[start].FoodCluster, 0},
 		}
 
 		for _, t := range g.turns[start:] {
@@ -455,7 +441,7 @@ func modeWins(games []game, top int) {
 		sigs[1].lastVal = last.LenAdvantage
 		sigs[2].lastVal = last.H2H
 		sigs[3].lastVal = last.OppConfinement + last.SelfConfinement
-		sigs[4].lastVal = last.FoodUrgency + last.FoodCluster + last.FoodReach
+		sigs[4].lastVal = last.FoodUrgency + last.FoodCluster
 
 		// Find biggest gain.
 		biggestName := ""
@@ -498,9 +484,8 @@ func modeSignals(games []game) {
 
 	sigNames := []string{
 		"Territory", "LenAdvantage", "H2H", "OppConfinement",
-		"SelfConfinement", "FoodUrgency", "FoodCluster", "FoodReach",
-		"FoodDenial", "StarvationRisk", "GrowthUrgency", "TailChase",
-		"Bottleneck",
+		"SelfConfinement", "FoodUrgency", "FoodCluster", "GrowthUrgency",
+		"TailChase",
 	}
 	stats := make(map[string]*signalStats)
 	for _, name := range sigNames {
@@ -523,18 +508,10 @@ func modeSignals(games []game) {
 			return r.FoodUrgency
 		case "FoodCluster":
 			return r.FoodCluster
-		case "FoodReach":
-			return r.FoodReach
-		case "FoodDenial":
-			return r.FoodDenial
-		case "StarvationRisk":
-			return r.StarvationRisk
 		case "GrowthUrgency":
 			return r.GrowthUrgency
 		case "TailChase":
 			return r.TailChase
-		case "Bottleneck":
-			return r.Bottleneck
 		}
 		return 0
 	}
@@ -583,6 +560,208 @@ func modeSignals(games []game) {
 	}
 }
 
+func modeTrajectories(games []game) {
+	// Phase boundaries.
+	const earlyEnd = 100
+	const midEnd = 250
+
+	type phaseStats struct {
+		avgTerritory    float64
+		avgSelfConfine  float64
+		avgOppConfine   float64
+		avgEval         float64
+		avgLenAdv       float64
+		avgH2H          float64
+		avgPartitioned  float64
+		territoryTrend  float64 // slope: last - first territory in phase
+		confineEvents   int     // turns with self-confinement < -10
+		count           int
+	}
+
+	computePhase := func(turns []record, start, end int) phaseStats {
+		var ps phaseStats
+		var firstTerr, lastTerr float64
+		first := true
+		for _, t := range turns {
+			if t.Turn == nil {
+				continue
+			}
+			turn := *t.Turn
+			if turn < start || turn >= end {
+				continue
+			}
+			ps.avgTerritory += t.Territory
+			ps.avgSelfConfine += t.SelfConfinement
+			ps.avgOppConfine += t.OppConfinement
+			ps.avgEval += t.Eval
+			ps.avgLenAdv += t.LenAdvantage
+			ps.avgH2H += t.H2H
+			if t.IsPartitioned {
+				ps.avgPartitioned++
+			}
+			if t.SelfConfinement < -10 {
+				ps.confineEvents++
+			}
+			if first {
+				firstTerr = t.Territory
+				first = true
+			}
+			lastTerr = t.Territory
+			first = false
+			ps.count++
+		}
+		if ps.count > 0 {
+			n := float64(ps.count)
+			ps.avgTerritory /= n
+			ps.avgSelfConfine /= n
+			ps.avgOppConfine /= n
+			ps.avgEval /= n
+			ps.avgLenAdv /= n
+			ps.avgH2H /= n
+			ps.avgPartitioned /= n
+			ps.territoryTrend = lastTerr - firstTerr
+		}
+		return ps
+	}
+
+	// Aggregate per outcome.
+	type outcomeAgg struct {
+		early, mid, late []phaseStats
+	}
+	winAgg := outcomeAgg{}
+	lossAgg := outcomeAgg{}
+
+	for _, g := range games {
+		if len(g.turns) == 0 {
+			continue
+		}
+		totalTurns := 0
+		if g.footer.TotalTurns > 0 {
+			totalTurns = g.footer.TotalTurns
+		}
+
+		early := computePhase(g.turns, 0, earlyEnd)
+		mid := computePhase(g.turns, earlyEnd, midEnd)
+		late := computePhase(g.turns, midEnd, totalTurns+1)
+
+		prefix := g.header.GameID
+		if len(prefix) > 8 {
+			prefix = prefix[:8]
+		}
+
+		if g.footer.Result == "loss" || g.footer.Result == "win" {
+			fmt.Printf("%-4s %s turn=%d: ", g.footer.Result, prefix, totalTurns)
+			if g.footer.DeathCause != "" {
+				fmt.Printf("(%s) ", g.footer.DeathCause)
+			}
+			fmt.Println()
+
+			for _, phase := range []struct {
+				name string
+				ps   phaseStats
+			}{{"early", early}, {"mid", mid}, {"late", late}} {
+				if phase.ps.count == 0 {
+					continue
+				}
+				fmt.Printf("  %-5s (%3d turns): eval=%+6.1f  terr=%+5.1f  trend=%+5.1f  lenAdv=%+5.1f  h2h=%+4.1f  oppConf=%+4.1f  selfConf=%+5.1f  confEvents=%d  partitioned=%.0f%%\n",
+					phase.name, phase.ps.count,
+					phase.ps.avgEval, phase.ps.avgTerritory, phase.ps.territoryTrend,
+					phase.ps.avgLenAdv, phase.ps.avgH2H,
+					phase.ps.avgOppConfine, phase.ps.avgSelfConfine,
+					phase.ps.confineEvents,
+					phase.ps.avgPartitioned*100)
+			}
+			fmt.Println()
+		}
+
+		switch g.footer.Result {
+		case "win":
+			winAgg.early = append(winAgg.early, early)
+			winAgg.mid = append(winAgg.mid, mid)
+			winAgg.late = append(winAgg.late, late)
+		case "loss":
+			lossAgg.early = append(lossAgg.early, early)
+			lossAgg.mid = append(lossAgg.mid, mid)
+			lossAgg.late = append(lossAgg.late, late)
+		}
+	}
+
+	// Print aggregate comparison.
+	avgPhase := func(phases []phaseStats) phaseStats {
+		var agg phaseStats
+		if len(phases) == 0 {
+			return agg
+		}
+		for _, ps := range phases {
+			agg.avgTerritory += ps.avgTerritory
+			agg.avgSelfConfine += ps.avgSelfConfine
+			agg.avgOppConfine += ps.avgOppConfine
+			agg.avgEval += ps.avgEval
+			agg.avgLenAdv += ps.avgLenAdv
+			agg.avgH2H += ps.avgH2H
+			agg.avgPartitioned += ps.avgPartitioned
+			agg.territoryTrend += ps.territoryTrend
+			agg.confineEvents += ps.confineEvents
+			agg.count += ps.count
+		}
+		n := float64(len(phases))
+		agg.avgTerritory /= n
+		agg.avgSelfConfine /= n
+		agg.avgOppConfine /= n
+		agg.avgEval /= n
+		agg.avgLenAdv /= n
+		agg.avgH2H /= n
+		agg.avgPartitioned /= n
+		agg.territoryTrend /= n
+		return agg
+	}
+
+	fmt.Println("═══════════════════════════════════════════════════════════════")
+	fmt.Println("AGGREGATE: Wins vs Losses by game phase")
+	fmt.Println("═══════════════════════════════════════════════════════════════")
+
+	for _, phase := range []struct {
+		name string
+		win  []phaseStats
+		loss []phaseStats
+	}{
+		{"EARLY (0-100)", winAgg.early, lossAgg.early},
+		{"MID (100-250)", winAgg.mid, lossAgg.mid},
+		{"LATE (250+)", winAgg.late, lossAgg.late},
+	} {
+		w := avgPhase(phase.win)
+		l := avgPhase(phase.loss)
+		fmt.Printf("\n%s  (wins=%d, losses=%d)\n", phase.name, len(phase.win), len(phase.loss))
+		fmt.Printf("  %-14s  %8s  %8s  %8s\n", "", "Wins", "Losses", "Delta")
+		fmt.Printf("  %-14s  %+8.1f  %+8.1f  %+8.1f\n", "eval", w.avgEval, l.avgEval, w.avgEval-l.avgEval)
+		fmt.Printf("  %-14s  %+8.1f  %+8.1f  %+8.1f\n", "territory", w.avgTerritory, l.avgTerritory, w.avgTerritory-l.avgTerritory)
+		fmt.Printf("  %-14s  %+8.1f  %+8.1f  %+8.1f\n", "terr trend", w.territoryTrend, l.territoryTrend, w.territoryTrend-l.territoryTrend)
+		fmt.Printf("  %-14s  %+8.1f  %+8.1f  %+8.1f\n", "lenAdv", w.avgLenAdv, l.avgLenAdv, w.avgLenAdv-l.avgLenAdv)
+		fmt.Printf("  %-14s  %+8.1f  %+8.1f  %+8.1f\n", "h2h", w.avgH2H, l.avgH2H, w.avgH2H-l.avgH2H)
+		fmt.Printf("  %-14s  %+8.1f  %+8.1f  %+8.1f\n", "oppConfine", w.avgOppConfine, l.avgOppConfine, w.avgOppConfine-l.avgOppConfine)
+		fmt.Printf("  %-14s  %+8.1f  %+8.1f  %+8.1f\n", "selfConfine", w.avgSelfConfine, l.avgSelfConfine, w.avgSelfConfine-l.avgSelfConfine)
+		fmt.Printf("  %-14s  %8.0f%%  %8.0f%%\n", "partitioned", w.avgPartitioned*100, l.avgPartitioned*100)
+
+		wEvents := 0
+		for _, ps := range phase.win {
+			wEvents += ps.confineEvents
+		}
+		lEvents := 0
+		for _, ps := range phase.loss {
+			lEvents += ps.confineEvents
+		}
+		wPerGame := 0.0
+		if len(phase.win) > 0 {
+			wPerGame = float64(wEvents) / float64(len(phase.win))
+		}
+		lPerGame := 0.0
+		if len(phase.loss) > 0 {
+			lPerGame = float64(lEvents) / float64(len(phase.loss))
+		}
+		fmt.Printf("  %-14s  %8.1f  %8.1f  (per game)\n", "confineEvents", wPerGame, lPerGame)
+	}
+}
+
 func main() {
 	mode := flag.String("mode", "summary", "summary | turning-points | deaths | wins | signals")
 	top := flag.Int("top", 10, "number of items to show")
@@ -612,6 +791,8 @@ func main() {
 		modeWins(games, *top)
 	case "signals":
 		modeSignals(games)
+	case "trajectories":
+		modeTrajectories(games)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown mode: %s\n", *mode)
 		os.Exit(1)

@@ -129,28 +129,6 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 	// Early-game food control (distance-weighted, not flat count).
 	score += 1.0 * earlyBlend * vr.MyFoodValue // wFoodCluster
 
-	// Food reach advantage.
-	if vr.MyClosestFoodDist > 0 && vr.OppClosestFoodDist > 0 {
-		foodReachDelta := float64(vr.OppClosestFoodDist - vr.MyClosestFoodDist)
-		score += 0.5 * foodReachDelta // wFoodReach
-	}
-
-	// Food denial (check against first alive opponent).
-	for i := range g.Snakes {
-		opp := &g.Snakes[i]
-		if i == myIdx || !opp.IsAlive() {
-			continue
-		}
-		if vr.OppFood == 0 && opp.Health < 40 {
-			score += 2.0 * float64(40-opp.Health) / 40.0 // wFoodDenial
-		}
-		break
-	}
-	// Starvation risk (independent of opponent).
-	if vr.MyFood == 0 && me.Health < 50 {
-		score -= 1.5 * float64(50-me.Health) / 50.0 // wStarvationRisk
-	}
-
 	// Growth urgency: penalize being undersized in early game.
 	if earlyBlend > 0 {
 		expectedLen := 3 + g.Turn/10
@@ -202,9 +180,6 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 		score -= 5.0 + 10.0*lateBlend
 	}
 
-	// Bottleneck signal removed (Iter 30): anti-correlated with wins.
-	// Winners squeeze aggressively → more threatened territory → signal penalized winning play.
-
 	// Tail chase bonus: reward proximity to own tail when space is tight.
 	if lateBlend > 0 {
 		tail := me.Tail()
@@ -242,12 +217,8 @@ type EvalBreakdown struct {
 	SelfConfinement float64
 	FoodUrgency     float64
 	FoodCluster     float64
-	FoodReach       float64
-	FoodDenial      float64
-	StarvationRisk  float64
 	GrowthUrgency   float64
 	TailChase       float64
-	Bottleneck      float64
 	EarlyBlend      float64
 	LateBlend       float64
 }
@@ -304,29 +275,6 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 	// Food cluster.
 	b.FoodCluster = 1.0 * earlyBlend * vr.MyFoodValue
 
-	// Food reach.
-	if vr.MyClosestFoodDist > 0 && vr.OppClosestFoodDist > 0 {
-		foodReachDelta := float64(vr.OppClosestFoodDist - vr.MyClosestFoodDist)
-		b.FoodReach = 0.5 * foodReachDelta
-	}
-
-	// Food denial.
-	for i := range g.Snakes {
-		opp := &g.Snakes[i]
-		if i == myIdx || !opp.IsAlive() {
-			continue
-		}
-		if vr.OppFood == 0 && opp.Health < 40 {
-			b.FoodDenial = 2.0 * float64(40-opp.Health) / 40.0
-		}
-		break
-	}
-
-	// Starvation risk.
-	if vr.MyFood == 0 && me.Health < 50 {
-		b.StarvationRisk = -(1.5 * float64(50-me.Health) / 50.0)
-	}
-
 	// Growth urgency.
 	if earlyBlend > 0 {
 		expectedLen := 3 + g.Turn/10
@@ -372,8 +320,6 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 		b.SelfConfinement = -(5.0 + 10.0*lateBlend)
 	}
 
-	// Bottleneck signal removed (Iter 30): anti-correlated with wins.
-
 	// Tail chase.
 	if lateBlend > 0 {
 		tail := me.Tail()
@@ -399,9 +345,8 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 	}
 
 	b.Total = b.Territory + b.LenAdvantage + b.H2H + b.OppConfinement +
-		b.SelfConfinement + b.FoodUrgency + b.FoodCluster + b.FoodReach +
-		b.FoodDenial + b.StarvationRisk + b.GrowthUrgency + b.TailChase +
-		b.Bottleneck
+		b.SelfConfinement + b.FoodUrgency + b.FoodCluster + b.GrowthUrgency +
+		b.TailChase
 
 	return b
 }

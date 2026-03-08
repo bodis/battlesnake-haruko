@@ -34,11 +34,11 @@ When finishing an iteration:
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 - Board sizes: 7x7, 11x11, 19x19 all supported. `maxBoardCells=361`. Loops use `Width*Height`, no 11x11 cost.
 
-## Current state (Iter 30 current, Iter 21+22+27partial+28partial+29 dead ends)
-Removed bottleneck signal (anti-correlated with wins) + phase-dependent confinement weights (stronger in late game). 61% vs v28 (N=100), ~433 avg turns. Tarjan AP always skipped. Confinement scales with lateBlend.
+## Current state (Iter 31 current, Iter 21+22+27partial+28partial+29 dead ends)
+Eval diet: stripped 3 dead signals (FoodReach, FoodDenial, StarvationRisk) + 6 unused Voronoi fields. 55% vs v17, 57% vs v28 (N=100), ~442 avg turns. Late-game eval 20% faster (195ns vs 244ns). First iteration with multi-opponent validation gate.
 
 ## Direction
-TBD — candidates: split bottleneck into offensive/defensive signals, fix dead starvation risk signal, weight recalibration. Algorithm changes (MCTS, hybrid search) ruled out.
+Iter 32: Territory quality signal (connectivity — avg same-owner neighbors per territory cell). Depth hypothesis disproved — we reach depth 14 in all games. Problem is eval quality in late game, not search depth. See ROADMAP.md for full plan with code sketches. Algorithm changes (MCTS, hybrid search) ruled out.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.

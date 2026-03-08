@@ -53,19 +53,7 @@ type VoronoiResult struct {
 	IsPartitioned bool // our wavefront never met any opponent wavefront
 
 	// Food quality (distance-weighted)
-	MyClosestFoodDist  int     // BFS dist to nearest food in our territory (0 = no food)
-	OppClosestFoodDist int     // opponent's nearest food distance (0 = no food)
-	MyFoodValue        float64 // sum of 1.0/dist for each food we own
-
-	// Territory shape
-	MyTerritoryDepth int // max BFS distance among our territory cells
-
-	// Positional (centroids)
-	MyCenterX, MyCenterY   float64
-	OppCenterX, OppCenterY float64
-
-	// Tail reachability
-	MyTailReachable bool // true if our tail cell is in our Voronoi territory
+	MyFoodValue float64 // sum of 1.0/dist for each food we own
 
 	// Bottleneck detection (articulation points in territory subgraph)
 	MyThreatenedTerritory  int // cells behind live APs in our territory
@@ -324,45 +312,20 @@ func VoronoiTerritory(g *GameSim, myIdx int, skipBottleneck bool) VoronoiResult 
 		}
 	}
 
-	// Count territory with centroid and depth tracking.
+	// Count territory.
 	var result VoronoiResult
-	var mySumX, mySumY, oppSumX, oppSumY int
-	var myMaxDist int16
-	x, y := 0, 0
 	for i := 0; i < size; i++ {
 		o := ws.owner[i]
 		if o > 0 {
 			if o == myTag {
 				result.MyTerritory++
-				mySumX += x
-				mySumY += y
-				if d := ws.dist[i]; d > myMaxDist {
-					myMaxDist = d
-				}
 			} else {
 				result.OppTerritory++
-				oppSumX += x
-				oppSumY += y
 			}
 		}
-		x++
-		if x == g.Width {
-			x = 0
-			y++
-		}
 	}
-	if result.MyTerritory > 0 {
-		result.MyCenterX = float64(mySumX) / float64(result.MyTerritory)
-		result.MyCenterY = float64(mySumY) / float64(result.MyTerritory)
-	}
-	if result.OppTerritory > 0 {
-		result.OppCenterX = float64(oppSumX) / float64(result.OppTerritory)
-		result.OppCenterY = float64(oppSumY) / float64(result.OppTerritory)
-	}
-	result.MyTerritoryDepth = int(myMaxDist)
 
-	// Count food ownership with distance tracking.
-	var myClosest, oppClosest int16
+	// Count food ownership.
 	for _, f := range g.Food {
 		fi := f.Y*g.Width + f.X
 		if fi < 0 || fi >= size {
@@ -376,32 +339,16 @@ func VoronoiTerritory(g *GameSim, myIdx int, skipBottleneck bool) VoronoiResult 
 			if d > 0 {
 				result.MyFoodValue += 1.0 / float64(d)
 			}
-			if myClosest == 0 || d < myClosest {
-				myClosest = d
-			}
 		default:
 			if o > 0 {
 				result.OppFood++
-				if oppClosest == 0 || d < oppClosest {
-					oppClosest = d
-				}
 			}
-		}
-	}
-	result.MyClosestFoodDist = int(myClosest)
-	result.OppClosestFoodDist = int(oppClosest)
-
-	// Tail reachability.
-	me := &g.Snakes[myIdx]
-	if me.IsAlive() {
-		tail := me.Tail()
-		if tail.X >= 0 && tail.X < g.Width && tail.Y >= 0 && tail.Y < g.Height {
-			result.MyTailReachable = ws.owner[tail.Y*g.Width+tail.X] == myTag
 		}
 	}
 
 	// Bottleneck detection: find threatened territory behind articulation points.
 	if !skipBottleneck {
+		me := &g.Snakes[myIdx]
 		myHead := me.Head()
 		myRootCell := int16(myHead.Y*g.Width + myHead.X)
 		result.MyThreatenedTerritory = ws.findThreatenedTerritory(myTag, myRootCell, result.MyTerritory, size, g.Width)

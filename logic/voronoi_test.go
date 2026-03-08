@@ -208,12 +208,6 @@ func TestVoronoiResult_FoodDistances(t *testing.T) {
 		Food: []Coord{{2, 0}, {8, 10}},
 	}
 	vr := VoronoiTerritory(g, 0, false)
-	if vr.MyClosestFoodDist != 2 {
-		t.Errorf("expected MyClosestFoodDist=2, got %d", vr.MyClosestFoodDist)
-	}
-	if vr.OppClosestFoodDist != 2 {
-		t.Errorf("expected OppClosestFoodDist=2, got %d", vr.OppClosestFoodDist)
-	}
 	// MyFoodValue = 1/2 = 0.5
 	if math.Abs(vr.MyFoodValue-0.5) > 0.01 {
 		t.Errorf("expected MyFoodValue≈0.5, got %f", vr.MyFoodValue)
@@ -240,9 +234,6 @@ func TestVoronoiResult_FoodValueMultiple(t *testing.T) {
 	if math.Abs(vr.MyFoodValue-expected) > 0.01 {
 		t.Errorf("expected MyFoodValue≈%.3f, got %f", expected, vr.MyFoodValue)
 	}
-	if vr.MyClosestFoodDist != 1 {
-		t.Errorf("expected MyClosestFoodDist=1, got %d", vr.MyClosestFoodDist)
-	}
 }
 
 func TestVoronoiResult_NoFoodZeroValues(t *testing.T) {
@@ -255,83 +246,8 @@ func TestVoronoiResult_NoFoodZeroValues(t *testing.T) {
 		},
 	}
 	vr := VoronoiTerritory(g, 0, false)
-	if vr.MyClosestFoodDist != 0 {
-		t.Errorf("expected MyClosestFoodDist=0, got %d", vr.MyClosestFoodDist)
-	}
-	if vr.OppClosestFoodDist != 0 {
-		t.Errorf("expected OppClosestFoodDist=0, got %d", vr.OppClosestFoodDist)
-	}
 	if vr.MyFoodValue != 0 {
 		t.Errorf("expected MyFoodValue=0, got %f", vr.MyFoodValue)
-	}
-}
-
-func TestVoronoiResult_TerritoryDepth(t *testing.T) {
-	g := &GameSim{
-		Width:  11,
-		Height: 11,
-		Snakes: []SimSnake{
-			{ID: "a", Body: []Coord{{0, 0}, {1, 0}}, Health: 100, Length: 2},
-			{ID: "b", Body: []Coord{{10, 10}, {9, 10}}, Health: 100, Length: 2},
-		},
-	}
-	vr := VoronoiTerritory(g, 0, false)
-	if vr.MyTerritoryDepth <= 0 {
-		t.Errorf("expected MyTerritoryDepth > 0, got %d", vr.MyTerritoryDepth)
-	}
-}
-
-func TestVoronoiResult_CentroidSymmetric(t *testing.T) {
-	// Symmetric board: snakes at opposite corners.
-	g := &GameSim{
-		Width:  11,
-		Height: 11,
-		Snakes: []SimSnake{
-			{ID: "a", Body: []Coord{{0, 0}, {1, 0}}, Health: 100, Length: 2},
-			{ID: "b", Body: []Coord{{10, 10}, {9, 10}}, Health: 100, Length: 2},
-		},
-	}
-	vr := VoronoiTerritory(g, 0, false)
-	// Centroids should be roughly mirror images across the center (5,5).
-	sumX := vr.MyCenterX + vr.OppCenterX
-	sumY := vr.MyCenterY + vr.OppCenterY
-	if math.Abs(sumX-10.0) > 2.0 {
-		t.Errorf("centroid X not symmetric: my=%.1f opp=%.1f sum=%.1f", vr.MyCenterX, vr.OppCenterX, sumX)
-	}
-	if math.Abs(sumY-10.0) > 2.0 {
-		t.Errorf("centroid Y not symmetric: my=%.1f opp=%.1f sum=%.1f", vr.MyCenterY, vr.OppCenterY, sumY)
-	}
-}
-
-func TestVoronoiResult_TailReachable(t *testing.T) {
-	// Short snake — tail is nearby and in own territory.
-	g := &GameSim{
-		Width:  11,
-		Height: 11,
-		Snakes: []SimSnake{
-			{ID: "a", Body: []Coord{{1, 1}, {1, 0}}, Health: 100, Length: 2},
-			{ID: "b", Body: []Coord{{9, 9}, {9, 10}}, Health: 100, Length: 2},
-		},
-	}
-	vr := VoronoiTerritory(g, 0, false)
-	if !vr.MyTailReachable {
-		t.Error("expected MyTailReachable=true when tail is in own territory")
-	}
-}
-
-func TestVoronoiResult_TailNotReachable(t *testing.T) {
-	// Snake a's tail is deep in opponent territory.
-	g := &GameSim{
-		Width:  5,
-		Height: 5,
-		Snakes: []SimSnake{
-			{ID: "a", Body: []Coord{{0, 0}, {4, 4}}, Health: 100, Length: 2},
-			{ID: "b", Body: []Coord{{3, 3}, {3, 2}}, Health: 100, Length: 2},
-		},
-	}
-	vr := VoronoiTerritory(g, 0, false)
-	if vr.MyTailReachable {
-		t.Error("expected MyTailReachable=false when tail is in opponent territory")
 	}
 }
 
@@ -467,7 +383,7 @@ func TestVoronoiResult_7x7Board(t *testing.T) {
 	}
 }
 
-func TestVoronoiResult_SingleSnakeDepthAndCentroid(t *testing.T) {
+func TestVoronoiResult_SingleSnakeTerritory(t *testing.T) {
 	g := &GameSim{
 		Width:  5,
 		Height: 5,
@@ -476,15 +392,8 @@ func TestVoronoiResult_SingleSnakeDepthAndCentroid(t *testing.T) {
 		},
 	}
 	vr := VoronoiTerritory(g, 0, false)
-	// Max depth from center: corners are at Manhattan dist 4 (e.g., (0,0) from (2,2)).
-	if vr.MyTerritoryDepth < 4 {
-		t.Errorf("expected MyTerritoryDepth >= 4, got %d", vr.MyTerritoryDepth)
-	}
-	// Centroid should be near board center (accounting for body blocked cells).
-	if math.Abs(vr.MyCenterX-2.0) > 0.5 {
-		t.Errorf("expected MyCenterX≈2.0, got %.2f", vr.MyCenterX)
-	}
-	if math.Abs(vr.MyCenterY-2.0) > 0.5 {
-		t.Errorf("expected MyCenterY≈2.0, got %.2f", vr.MyCenterY)
+	// Single snake should own all non-body territory.
+	if vr.MyTerritory < 20 {
+		t.Errorf("expected MyTerritory >= 20, got %d", vr.MyTerritory)
 	}
 }
