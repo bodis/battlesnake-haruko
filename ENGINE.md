@@ -123,6 +123,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 24 | Weight calibration (6/12 weights improved) | 61% vs v23 |
 | 25 | Win/loss trace analysis | (analysis only, no code change) |
 | 26 | Phase-gate bottleneck detection | 67% vs v24, ~316 avg turns |
+| 27 | Wall-only move pruning in BRS | 62% vs v26, ~329 avg turns |
 
 ## Dead Ends
 
@@ -149,8 +150,11 @@ Edge/corner penalty, territory depth adequacy, center-of-mass advantage. All thr
 ### Opponent pressure & aggression (Iter 22): 42–49%
 Dominance score (length+territory+food composite), H2H range expansion, confinement scaling, health pressure, directional pressure (push to edge). Tested 7 variants isolating each signal: full plan (42%), no directional + reduced scaling (49%), H2H scaling instead of range (47%), confinement+health only (48%), health pressure only (43%), dominance-scaled food denial (46%). All negative. Root cause: in self-play, both sides use the same eval, so aggression modulation doesn't give asymmetric advantage. The search already implicitly finds aggressive moves when they lead to better territory/length/confinement positions. Explicit aggression signals add noise that confuses BRS.
 
+### Full unsafe move pruning (Iter 27 partial): 32%
+Full `isSafeDir` pruning (wall + body collision) in `brsMax`/`brsMin`. `isSafeDir` is a static check on the current board — it doesn't account for tail retraction. Pruning an opponent move that appears to hit a body segment (but won't after the tail retracts) removes the min's actual best response, causing the engine to overestimate positions. Wall-only pruning (a subset) succeeded at 62% because walls never move.
+
 ### Key principle
-Every past win came from deeper search or better eval. Search mechanics (pruning, ordering) are saturated at BF=4. The remaining lever is eval quality — but new signals must add genuinely new information, not restate what Voronoi territory already captures. Dominance-based weight modulation is also ineffective because both sides of self-play share the same eval.
+Every past win came from deeper search or better eval. Search mechanics (pruning, ordering) are saturated at BF=4. The remaining lever is eval quality — but new signals must add genuinely new information, not restate what Voronoi territory already captures. Dominance-based weight modulation is also ineffective because both sides of self-play share the same eval. Sound pruning (wall-only) is a valid third lever: it reduces BF without losing information.
 
 ## Findings
 
@@ -175,6 +179,9 @@ Both sides share the same eval, so dynamic modulation (aggression, dominance sca
 
 ### Territory decides everything (Iter 25 analysis)
 100% of wins are territory-squeeze. Games are decided by sudden 1-2 turn territory flips (200+ eval swing). The winner often has a territory *disadvantage* for most of the game, then wins via a sudden confinement kill. LenAdvantage is the strongest differentiator between wins and losses (not territory). Deaths are 50% collision, 25% wall-collision, evenly split between mid-game and late-game. Implication: more search depth to foresee territory flips is the next lever.
+
+### Sound pruning vs heuristic pruning (Iter 27)
+Wall-only move pruning (skip moves that go off-board) is sound and wins 62% vs v26. Full `isSafeDir` pruning (wall + body) loses at 32% because body-collision checks are static and don't account for tail movement. The distinction: walls are immutable board boundaries, body segments are dynamic. Sound pruning reduces BF without information loss; heuristic pruning at BF=4 removes critical information.
 
 ### Phase-gating eval cost for depth (Iter 26)
 Skipping Tarjan's AP in early game (`lateBlend < 0.1`) recovers 57% of Voronoi cost (2414ns → 1051ns), translating to ~2 extra search plies. Result: 67% vs v24 — the strongest single-iteration improvement since Iter 8. The skipped signal contributes at most ~1.65 eval points at the threshold — well below noise floor. This confirms that early-game search depth is critical: the engine needs to see territory flips coming, and cheaper eval = more depth = better foresight.

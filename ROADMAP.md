@@ -10,11 +10,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iterations 1-20, 23-26 (see ROADMAP_FINISHED.md for 1-20, 23-26) |
-| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression) |
-| **Next** | TBD — analyze Iter 26 results to determine next lever |
-| **Current** | v26 Phase-gate bottleneck; BRS depth ~14-15 early, ~12-13 late; Evaluate ~1116ns early / ~2450ns late; 67% vs v24 |
-| **Key insight** | Skipping Tarjan's AP in early game (lateBlend < 0.1) recovers 57% of Voronoi cost, translating to ~2 extra search plies. Early-game depth is critical for foreseeing territory flips. |
+| **Completed** | Iterations 1-20, 23-27 (see ROADMAP_FINISHED.md) |
+| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%) |
+| **Next** | TBD — analyze v27 game traces to determine next lever |
+| **Current** | v27 Wall-only move pruning; 62% vs v26 (N=100); ~329 avg turns |
+| **Key insight** | Wall-only pruning is sound (walls never move). Body-collision pruning is unsound — `isSafeDir` is static and doesn't account for tail retraction, causing position overestimation. |
 
 ---
 
@@ -26,7 +26,7 @@ Candidate directions for future iterations:
 Space-to-length ratio, partition food planning, opponent space crisis.
 
 **New eval signals (TBD):**
-Data-driven — trace new v26 games to identify remaining weaknesses.
+Data-driven — trace new v27 games to identify remaining weaknesses.
 
 **Further phase-gating:**
 Other eval signals that could be skipped/simplified in early game for more depth.
@@ -47,3 +47,4 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | 24 | `snapshots/haruko-355c7d3` | ~337 | Weight calibration; 61% vs v23 |
 | 25 | | | Win/loss trace analysis |
 | 26 | `snapshots/haruko-fb7b3a1` | ~316 | Phase-gate bottleneck; 67% vs v24 |
+| 27 | `snapshots/haruko-wallonly` | ~329 | Wall-only move pruning; 62% vs v26 |

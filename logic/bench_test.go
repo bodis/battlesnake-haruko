@@ -106,3 +106,25 @@ func BenchmarkBestMoveIterative(b *testing.B) {
 		g.BestMoveIterative("me", 50*time.Millisecond)
 	}
 }
+
+func BenchmarkBestMoveIterativeDepth(b *testing.B) {
+	g := standardBenchGame()
+	b.ResetTimer()
+	var totalDepth int
+	for i := 0; i < b.N; i++ {
+		g.BestMoveIterative("me", 50*time.Millisecond)
+		totalDepth += g.LastCompletedDepth
+	}
+	b.ReportMetric(float64(totalDepth)/float64(b.N), "depth/op")
+}
+
+func BenchmarkBestMoveIterativeNodes(b *testing.B) {
+	g := standardBenchGame()
+	b.ResetTimer()
+	var totalNodes int64
+	for i := 0; i < b.N; i++ {
+		g.BestMoveIterative("me", 50*time.Millisecond)
+		totalNodes += g.LastNodeCount
+	}
+	b.ReportMetric(float64(totalNodes)/float64(b.N), "nodes/op")
+}

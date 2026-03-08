@@ -21,6 +21,7 @@ type searchContext struct {
 	killers    killerTable
 	hasKillers [brsMaxDepth + 1][2]bool
 	tt         *TranspositionTable
+	nodes      int64 // total nodes explored this search
 }
 
 // storeKiller records a move that caused a beta cutoff at the given depth.
@@ -158,6 +159,7 @@ func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction
 		pvMove = depthBest
 		hasPV = true
 		g.LastCompletedDepth = depth
+		g.LastNodeCount = ctx.nodes
 	}
 
 	return bestDir
@@ -320,8 +322,28 @@ func qsMin(g *GameSim, qsDepth int, alpha, beta float64, myDir Direction, myIdx,
 	return worst
 }
 
+// wallSafeMoves filters out moves that go off the board (wall collision).
+// Returns the filtered list and count. If all moves hit walls, returns the
+// original list unfiltered (caller needs at least 1 move).
+func wallSafeMoves(head Coord, w, h int, ordered [4]Direction) ([4]Direction, int) {
+	var out [4]Direction
+	n := 0
+	for _, d := range ordered {
+		next := head.Move(d)
+		if next.X >= 0 && next.X < w && next.Y >= 0 && next.Y < h {
+			out[n] = d
+			n++
+		}
+	}
+	if n == 0 {
+		return ordered, 4
+	}
+	return out, n
+}
+
 // brsMax is the maximizing ply (our move) in Best-Reply Search.
 func brsMax(g *GameSim, depth int, alpha, beta float64, myIdx, oppIdx int, ctx *searchContext) float64 {
+	ctx.nodes++
 	if time.Now().After(ctx.deadline) {
 		ctx.timedOut = true
 		return 0
@@ -349,14 +371,16 @@ func brsMax(g *GameSim, depth int, alpha, beta float64, myIdx, oppIdx int, ctx *
 	bestScore := math.Inf(-1)
 	bestMove := Down
 
-	var moves [4]Direction
+	var ordered [4]Direction
 	if depth <= brsMaxDepth {
-		moves = orderedMoves(ttMove, hasTTMove, ctx.killers[depth], ctx.hasKillers[depth])
+		ordered = orderedMoves(ttMove, hasTTMove, ctx.killers[depth], ctx.hasKillers[depth])
 	} else {
-		moves = AllDirections
+		ordered = AllDirections
 	}
+	moves, nMoves := wallSafeMoves(g.Snakes[myIdx].Head(), g.Width, g.Height, ordered)
 
-	for _, myDir := range moves {
+	for i := 0; i < nMoves; i++ {
+		myDir := moves[i]
 		val := brsMin(g, depth-1, alpha, beta, myDir, myIdx, oppIdx, ctx)
 		if ctx.timedOut {
 			break
@@ -383,6 +407,7 @@ func brsMax(g *GameSim, depth int, alpha, beta float64, myIdx, oppIdx int, ctx *
 
 // brsMin is the minimizing ply (opponent's response) in Best-Reply Search.
 func brsMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myIdx, oppIdx int, ctx *searchContext) float64 {
+	ctx.nodes++
 	if time.Now().After(ctx.deadline) {
 		ctx.timedOut = true
 		return 0
@@ -404,14 +429,16 @@ func brsMin(g *GameSim, depth int, alpha, beta float64, myDir Direction, myIdx, 
 
 	worstScore := math.Inf(1)
 
-	var moves [4]Direction
+	var ordered [4]Direction
 	if depth <= brsMaxDepth {
-		moves = orderedMoves(Down, false, ctx.killers[depth], ctx.hasKillers[depth])
+		ordered = orderedMoves(Down, false, ctx.killers[depth], ctx.hasKillers[depth])
 	} else {
-		moves = AllDirections
+		ordered = AllDirections
 	}
+	moves, nMoves := wallSafeMoves(g.Snakes[oppIdx].Head(), g.Width, g.Height, ordered)
 
-	for _, oppDir := range moves {
+	for i := 0; i < nMoves; i++ {
+		oppDir := moves[i]
 		sim := g.CloneFromPool()
 		sim.Step(newMoveSet2(myIdx, myDir, oppIdx, oppDir))
 

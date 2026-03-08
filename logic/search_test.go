@@ -335,6 +335,18 @@ func TestQS_HeadToHeadKill(t *testing.T) {
 	}
 }
 
+// --- Search Instrumentation Tests ---
+
+// TestNodeCount: verify LastNodeCount is populated after search.
+func TestNodeCount(t *testing.T) {
+	g := standardBenchGame()
+	g.BestMoveIterative("me", 50*time.Millisecond)
+	if g.LastNodeCount <= 0 {
+		t.Errorf("expected positive node count, got %d", g.LastNodeCount)
+	}
+	t.Logf("50ms budget: depth=%d nodes=%d", g.LastCompletedDepth, g.LastNodeCount)
+}
+
 // TestEvaluate_MeDead: returns -1000 when our snake is eliminated.
 func TestEvaluate_MeDead(t *testing.T) {
 	me := SimSnake{ID: "me", Body: []Coord{{0, 0}}, Health: 0, Length: 1, EliminatedCause: "starvation"}

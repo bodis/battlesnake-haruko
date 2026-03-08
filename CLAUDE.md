@@ -34,11 +34,11 @@ When finishing an iteration:
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 - Board sizes: 7x7, 11x11, 19x19 all supported. `maxBoardCells=361`. Loops use `Width*Height`, no 11x11 cost.
 
-## Current state (Iter 26, Iter 21+22 dead ends)
-Phase-gate bottleneck: skip Tarjan's AP when lateBlend < 0.1 (board fill < 32%). Early-game Evaluate: ~1116ns (was ~2450ns), 54% faster. Late-game unchanged. 67% vs v24 (N=100). Strongest single-iteration gain since Iter 8.
+## Current state (Iter 27, Iter 21+22+27partial dead ends)
+Wall-only move pruning in BRS: `wallSafeMoves` filters off-board moves in `brsMax`/`brsMin`. Full `isSafeDir` pruning (wall+body) failed at 32% — body checks are static, don't account for tail retraction. Wall-only is sound. 62% vs v26 (N=100). Also added `searchContext.nodes` + `LastNodeCount` instrumentation.
 
 ## Direction
-TBD — analyze v26 game traces to identify next lever. Candidates: late-game survival signals, further phase-gating, new eval signals.
+TBD — analyze v27 game traces to identify next lever. Candidates: late-game survival signals, further phase-gating, new eval signals.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.

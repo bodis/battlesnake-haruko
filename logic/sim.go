@@ -32,7 +32,8 @@ type GameSim struct {
 	Turn          int
 	poolRef       *pooledGameSim // back-reference for Release; nil if not pooled
 
-	LastCompletedDepth int // set by BestMoveIterative after search
+	LastCompletedDepth int   // set by BestMoveIterative after search
+	LastNodeCount      int64 // set by BestMoveIterative after search
 }
 
 // cloneSnakes deep-copies a SimSnake slice so no body backing arrays are shared.

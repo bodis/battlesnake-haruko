@@ -517,3 +517,33 @@ Dominance score (length+territory+food composite) used to modulate H2H range, co
 **Depends on:** Iteration 19
 
 Original plan: detect corridor-shaped territory via thin-cell counting (cells with ≤1 owned neighbor). Iter 23's Tarjan AP detection captures the dangerous case directly — corridor territory that can be severed by opponent moves. Thin-cell counting would add a softer, redundant version of the same signal at additional eval cost. Skipped.
+
+---
+
+### Iteration 27 — Wall-Only Move Pruning in BRS
+
+**Status:** DONE
+**Depends on:** Iteration 26
+
+**Goal:** Reduce effective branching factor by pruning guaranteed-death moves in `brsMax`/`brsMin`.
+
+**What was built:**
+- `wallSafeMoves(head, w, h, ordered)` — filters moves that go off-board (wall collision only)
+- Applied in both `brsMax` (our moves) and `brsMin` (opponent moves)
+- Fallback: if all moves hit walls, keep all 4 (needed for corner death scoring)
+- `searchContext.nodes` counter + `GameSim.LastNodeCount` — search instrumentation
+- `BenchmarkBestMoveIterativeDepth` / `BenchmarkBestMoveIterativeNodes` — resource consumption benchmarks
+- `TestNodeCount` — verify instrumentation
+
+**Key discovery:** Full `isSafeDir` pruning (wall + body) scored 32% vs v26 — a severe regression. Body-collision filtering is unsound because `isSafeDir` checks the *current* board statically but tails move on the next turn. Pruning an opponent move that appears to hit a tail (but won't after the tail retracts) removes the opponent's actual best response, causing the engine to overestimate positions. Wall-only pruning is sound because walls never move.
+
+**Result:** 62% vs v26 (N=100). ~329 avg turns.
+
+---
+
+### Iteration 27 (dead end) — Full Unsafe Move Pruning ❌
+
+**Status:** DEAD END
+**Result:** 32% vs v26 (N=100)
+
+Full `isSafeDir` pruning (walls + body segments) in both `brsMax` and `brsMin`. Failed because `isSafeDir` is a static check — it doesn't account for tail retraction. Removing an opponent body-collision move that is actually safe (tail will vacate) removes the min's best option, making us overestimate positions. Wall-only subset succeeded (62%).
