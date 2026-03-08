@@ -69,4 +69,4 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | 29 | — | — | ❌ Dead end: hybrid BRS+MCTS (2–46%) |
 | 30 | `snapshots/haruko-c77fa1f` | ~433 | Remove bottleneck + phase confinement; 61% vs v28 |
 | 31 | `snapshots/haruko-e7f195f` | ~442 | Eval diet: strip dead signals + Voronoi fields; 55% vs v17, 57% vs v28 |
-| 32 | `snapshots/haruko-2fbfa99` | ~443-451 | Territory connectivity (absolute MyConnectivity); 56-61% vs v31 |
+| 32 | `snapshots/haruko-69c43bb` | ~443-451 | Territory connectivity (absolute MyConnectivity); 56-61% vs v31 |
