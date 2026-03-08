@@ -52,6 +52,28 @@ type traceRecord struct {
 	EarlyBlend      float64 `json:"early_blend,omitempty"`
 	LateBlend       float64 `json:"late_blend,omitempty"`
 
+	// Diagnostic: territory depth profile
+	MyNearTerritory  int `json:"my_near_territory,omitempty"`
+	MyFarTerritory   int `json:"my_far_territory,omitempty"`
+	OppNearTerritory int `json:"opp_near_territory,omitempty"`
+	OppFarTerritory  int `json:"opp_far_territory,omitempty"`
+
+	// Diagnostic: territory shape
+	MyCorridorCells  int `json:"my_corridor_cells,omitempty"`
+	OppCorridorCells int `json:"opp_corridor_cells,omitempty"`
+
+	// Diagnostic: escape reachability (head-only BFS, 6 steps)
+	MyEscapeRoutes  int `json:"my_escape_routes,omitempty"`
+	OppEscapeRoutes int `json:"opp_escape_routes,omitempty"`
+
+	// Diagnostic: derived ratios
+	MyFunnelRatio    float64 `json:"my_funnel_ratio,omitempty"`    // near / territory (high = compact)
+	MyCorridorRatio  float64 `json:"my_corridor_ratio,omitempty"`  // corridor cells / territory
+	MyEscapeRatio    float64 `json:"my_escape_ratio,omitempty"`    // escape / territory (low = trapped)
+	OppFunnelRatio   float64 `json:"opp_funnel_ratio,omitempty"`
+	OppCorridorRatio float64 `json:"opp_corridor_ratio,omitempty"`
+	OppEscapeRatio   float64 `json:"opp_escape_ratio,omitempty"`
+
 	// Footer fields
 	Result     string `json:"result,omitempty"`
 	DeathCause string `json:"death_cause,omitempty"`
@@ -111,11 +133,39 @@ func traceTurn(gameID, snakeID string, state GameState, sim *logic.GameSim, move
 	vr := logic.VoronoiTerritory(sim, myIdx, true)
 
 	oppLen := 0
+	oppIdx := -1
 	for i := range sim.Snakes {
 		if i != myIdx && sim.Snakes[i].IsAlive() {
 			oppLen = sim.Snakes[i].Length
+			oppIdx = i
 			break
 		}
+	}
+
+	// Escape reachability (head-only BFS, 6 steps).
+	myEscape := logic.EscapeReachabilityPooled(sim, myIdx, 6)
+	// Opponent escape: use allocating diagnostic version (trace-only, not hot path).
+	oppEscape := 0
+	if oppIdx >= 0 {
+		oppEscape = logic.EscapeReachability(sim, oppIdx, 6)
+	}
+
+	// Derived ratios.
+	myFunnelRatio := 0.0
+	myCorridorRatio := 0.0
+	myEscapeRatio := 0.0
+	if vr.MyTerritory > 0 {
+		myFunnelRatio = float64(vr.MyNearTerritory) / float64(vr.MyTerritory)
+		myCorridorRatio = float64(vr.MyCorridorCells) / float64(vr.MyTerritory)
+		myEscapeRatio = float64(myEscape) / float64(vr.MyTerritory)
+	}
+	oppFunnelRatio := 0.0
+	oppCorridorRatio := 0.0
+	oppEscapeRatio := 0.0
+	if vr.OppTerritory > 0 {
+		oppFunnelRatio = float64(vr.OppNearTerritory) / float64(vr.OppTerritory)
+		oppCorridorRatio = float64(vr.OppCorridorCells) / float64(vr.OppTerritory)
+		oppEscapeRatio = float64(oppEscape) / float64(vr.OppTerritory)
 	}
 
 	turn := state.Turn
@@ -146,6 +196,22 @@ func traceTurn(gameID, snakeID string, state GameState, sim *logic.GameSim, move
 		OppConnectivity: vr.OppConnectivity,
 		EarlyBlend:      bd.EarlyBlend,
 		LateBlend:       bd.LateBlend,
+
+		// Diagnostic fields
+		MyNearTerritory:  vr.MyNearTerritory,
+		MyFarTerritory:   vr.MyFarTerritory,
+		OppNearTerritory: vr.OppNearTerritory,
+		OppFarTerritory:  vr.OppFarTerritory,
+		MyCorridorCells:  vr.MyCorridorCells,
+		OppCorridorCells: vr.OppCorridorCells,
+		MyEscapeRoutes:   myEscape,
+		OppEscapeRoutes:  oppEscape,
+		MyFunnelRatio:    myFunnelRatio,
+		MyCorridorRatio:  myCorridorRatio,
+		MyEscapeRatio:    myEscapeRatio,
+		OppFunnelRatio:   oppFunnelRatio,
+		OppCorridorRatio: oppCorridorRatio,
+		OppEscapeRatio:   oppEscapeRatio,
 	}
 	tg.records = append(tg.records, rec)
 }

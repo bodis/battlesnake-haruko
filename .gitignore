@@ -29,6 +29,7 @@ go.work.sum
 
 # Build artifacts
 haruko
+/analyze
 .snake.pid
 
 # Bench snapshots and result files

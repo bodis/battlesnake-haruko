@@ -10,10 +10,193 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iterations 1-20, 23-28, 30-32 (see ROADMAP_FINISHED.md) |
-| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%), Iter 28 partial (tail-aware BRS pruning: 43%), Iter 29 (hybrid BRS+MCTS: 2–46%) |
+| **Completed** | Iterations 1-20, 23-28, 30-33 (see below + ROADMAP_FINISHED.md) |
+| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%), Iter 28 partial (tail-aware BRS pruning: 43%), Iter 29 (hybrid BRS+MCTS: 2–46%), Iter 33 (escape/territory eval signals: 37–54%) |
 | **Current** | v32 Territory connectivity: absolute MyConnectivity signal; 56-61% vs v31 (N=100); ~443-451 avg turns |
-| **Key insight** | Absolute connectivity (rewarding our own wide territory) works; delta connectivity (my-opp) is neutral in self-play like Iter 22's aggression. New signals must be asymmetric to matter in self-play. |
+| **Key insight** | Narrow corridors are NORMAL in late game, not a pathology to avoid. Escape/territory signals correlate with outcomes but reacting to them via eval weights causes conservative play (defensive) or cancels in self-play (offensive). The right response to confinement is a different ALGORITHM, not a different score. |
+
+---
+
+## Iter 33 — Escape Routes + Territory Depth Eval Signals (Dead End)
+
+**Status:** ❌ DEAD END — 37–54% across 8 configurations
+
+**Goal:** Add escape routes and far territory as eval signals to detect positional collapse.
+
+**What was tried (A/B vs v32, N=100 each):**
+
+| Config | Type | Weight | Threshold | Result |
+|--------|------|--------|-----------|--------|
+| Defensive escape + far territory | penalty + reward | wE=5.0, wF=1.0 | escape<25 | **37%** |
+| Far territory only | reward | wF=0.5 | — | **46%** |
+| Defensive escape only (gated) | penalty | wE=3.0 | escape<12 | **40%** |
+| Defensive escape only (always) | penalty | wE=3.0 | escape<12 | **48%** |
+| Offensive opponent squeeze | reward | w=3.0 | oppEscape<15 | **54%** |
+| Offensive opponent squeeze | reward | w=5.0 | oppEscape<15 | **46%** |
+| Offensive opponent squeeze | reward | w=4.0 | oppEscape<15 | **49%** |
+| Offensive opponent squeeze | reward | w=3.0 | oppEscape<20 | **45%** |
+
+**Why it failed:**
+
+1. **Narrow corridors are normal in late game, not pathological.** On 11x11 after 250+ turns, corridors happen constantly. The diagnostic analysis cherry-picked LOSING cases and found correlations, but the same signals fire frequently in WINNING cases too. Reacting to the signal changes behavior in ALL cases — including the many where corridors are fine.
+
+2. **Defensive signals cause conservative play.** Penalizing low escape routes makes the engine avoid aggressive squeezing positions. But squeezing is the winning strategy — winners have MORE fragile territory (same pattern as Iter 30's bottleneck signal). The v32 opponent doesn't have this penalty, squeezes freely, and wins.
+
+3. **Offensive signals are weak or cancel.** Rewarding opponent squeeze (54% best case) provides marginal benefit at w=3.0 but overweighting (w=4.0-5.0) hurts. The signal adds cost (~500ns BFS per eval) for unreliable gain within statistical noise.
+
+4. **Far territory is redundant with territory count.** Rewarding far territory (46%) double-counts what the territory signal already captures. More territory naturally means more far territory.
+
+**Key lesson:** Correlation between a metric and outcomes does NOT mean the metric works as an eval signal. The metric detects a situation, but the right RESPONSE to that situation matters more than the detection. Narrow corridors need a different algorithm (routing, survival), not a score penalty.
+
+**Infrastructure retained (no eval cost, useful for future iterations):**
+- `VoronoiResult` depth profile fields: `MyNearTerritory`, `MyFarTerritory`, `OppNearTerritory`, `OppFarTerritory`, `MyCorridorCells`, `OppCorridorCells` — computed in existing territory loop, ~0 extra cost
+- `EscapeReachabilityPooled(g, snakeIdx, maxDist)` — zero-alloc pooled BFS in `logic/voronoi.go`
+- `EscapeReachability(g, snakeIdx, maxDist)` — allocating BFS in `logic/diagnostic.go`, trace-only
+- Trace fields: escape routes, corridor/funnel ratios for both snakes
+- `cmd/analyze`: `correlation` + `decision-points` modes
+
+---
+
+## Iter 34 — Bottleneck-Aware Routing
+
+**Status:** PLANNED
+
+**Goal:** When our territory has a bottleneck (articulation point), detect which side of it our head is on and prefer the side with more space. This is a ROUTING decision — "go through the corridor to reach the larger area before it closes" — not an eval penalty for being in a corridor.
+
+### Problem Analysis
+
+The engine frequently ends up on the wrong side of a bottleneck: its territory has a narrow passage connecting a small region (where our head is) to a large region (unreachable if the passage closes). The eval doesn't distinguish these — both sides count as "our territory." By the time the passage closes, the engine is trapped in the small region and dies.
+
+This is different from Iter 33's approach:
+- Iter 33 tried to penalize "being in a narrow space" → caused conservative play
+- Iter 34 detects "which side of the bottleneck has more space" → guides movement toward the larger region
+- The signal is DIRECTIONAL (tells you WHERE to go), not just evaluative (this is bad)
+
+### Implementation Plan
+
+**Step 1: Head-side region analysis**
+
+We already have Tarjan's AP detection (in `voronoi.go`, currently skipped in eval). The `apCut` field tells us how many cells would be disconnected if an AP is removed. What's missing: determining which side of the AP our head is on.
+
+Approach:
+- After Tarjan's identifies APs in our territory, do a flood fill from our head WITHOUT crossing any AP
+- The size of this flood fill = our "accessible region" without bottleneck passages
+- Compare to total territory: if accessible region << total territory, we're on the wrong side
+
+**Step 2: Conditional eval signal**
+
+Only fires when:
+1. An AP exists in our territory (bottleneck detected)
+2. Our head-side region is significantly smaller than the other side (e.g., < 40% of territory)
+
+Signal: penalize being on the small side, proportional to the size imbalance.
+
+```
+headSideRatio = headSideRegion / myTerritory
+if headSideRatio < 0.4 {
+    score += wBottleneckRoute * lateBlend * (headSideRatio - 0.4)
+}
+```
+
+This is **not** a general narrowness penalty. It only fires when there's a specific topological problem (head on wrong side of bottleneck) and tells the engine to move toward the larger region.
+
+**Step 3: Cost management**
+
+- Tarjan's AP detection: ~1350ns (from Iter 23 benchmarks), too expensive for every eval
+- Option A: Only run Tarjan's when lateBlend > 0.5 (crowded board where bottlenecks matter)
+- Option B: Use the lighter flood-fill-from-head approach instead of full Tarjan's: BFS from head counting reachable cells in our territory, stop at narrow passages (cells with ≤ 1 same-owner neighbor). Cheaper than Tarjan's.
+- The head-side flood fill itself is cheap (~50-100ns for small regions)
+
+### Testing Plan
+
+- `make compare PREV=snapshots/haruko-69c43bb N=100` — vs v32. Must beat >55%.
+- `make compare PREV=snapshots/haruko-tailaware N=100` — vs v28. Generalization test.
+
+### Files to Modify
+
+| File | Change |
+|------|--------|
+| `logic/voronoi.go` | Head-side region analysis after AP detection |
+| `logic/eval.go` | Conditional bottleneck routing signal |
+
+---
+
+## Iter 35 — Survival Mode: Longest Path in Confined Space
+
+**Status:** PLANNED
+
+**Goal:** When partitioned (or very confined, e.g. escape routes < 20), switch from BRS minimax to a space-filling survival algorithm. In a partitioned board, the opponent can't reach us — the only question is who fills their space more efficiently. BRS is solving the wrong problem; a longest-path algorithm directly optimizes survival.
+
+### Problem Analysis
+
+When the board is partitioned, BRS simulates opponent moves that can't affect us. The eval compares territory that won't change. The engine effectively plays random moves in its partition. A space-filling algorithm would play optimally: follow the tail, avoid dead ends, maximize turns survived.
+
+### Implementation Plan
+
+**Step 1: Detect confined state**
+
+Trigger conditions (any of):
+- `vr.IsPartitioned == true` (board fully partitioned)
+- `EscapeReachabilityPooled(g, myIdx, 6) < 20` (very confined, even if not fully partitioned)
+
+**Step 2: Longest-path DFS**
+
+When confined to N cells (N < ~30):
+- Run exhaustive DFS from head through reachable cells
+- Find the longest simple path (visits most cells without revisiting)
+- With N ≈ 20, this is trivially fast — DFS with backtracking on a grid graph of 20 nodes takes microseconds
+- Return the first move of the longest path
+
+For larger confined areas (N = 30-60):
+- Exhaustive DFS becomes too slow
+- Use heuristic: prefer moves that maximize reachable cells after moving (greedy flood fill)
+- Enhanced tail-chasing: strongly prefer moves toward own tail (creates a loop, maximizes survival)
+
+**Step 3: Integration with BRS**
+
+Options:
+- **Replace BRS entirely** when partitioned — survival algorithm chooses the move directly
+- **Use as eval** when partitioned — `score = survivable_turns` instead of territory-based eval
+- Replacement is cleaner: BRS opponent modeling is wasted computation when partitioned
+
+**Step 4: Tail-aware space filling**
+
+Key insight: our tail moves as we move, opening cells behind us. So in a 20-cell partition, we can survive more than 20 turns if we follow our tail efficiently. The algorithm must account for tail movement when computing longest path.
+
+### Testing Plan
+
+- Focus on partition-specific metrics: compare survival turns in partitioned positions
+- `make compare PREV=snapshots/haruko-69c43bb N=100` — vs v32. Must beat >55%.
+- Trace analysis: verify the algorithm triggers in the right situations
+
+### Files to Modify
+
+| File | Change |
+|------|--------|
+| `logic/search.go` | Partition detection, survival mode bypass |
+| `logic/survival.go` | New file: longest-path DFS, space-filling heuristic |
+| `logic/eval.go` | Optional: survivable-turns eval for partition case |
+
+---
+
+## Iter 36 — Adaptive Time Management
+
+**Status:** PLANNED (lower priority)
+
+**Goal:** Allocate more search time in critical positions (partitioned, low escape, near-death) and less in stable positions (open board, high territory). Currently every move gets 300ms. Critical positions need deeper search; stable positions are decided by depth 8.
+
+### Implementation Plan
+
+- Base budget: 300ms
+- Critical position (low escape, partitioned): up to 450ms
+- Stable position (high territory, open board): down to 200ms
+- Net budget per game remains similar
+
+### Files to Modify
+
+| File | Change |
+|------|--------|
+| `main.go` | Dynamic budget calculation based on position features |
 
 ---
 
@@ -39,14 +222,11 @@
 
 ## Future Directions
 
-**Weight recalibration on quality eval:**
-After adding connectivity signal, all weights may need recalibration. Test against v17.
+**Weight recalibration:**
+After structural changes (bottleneck routing, survival mode), all weights may need recalibration. Test against v17.
 
-**Opponent squeeze reward:**
-If connectivity works, consider rewarding positions where opponent connectivity is *decreasing* (we're squeezing their corridors).
-
-**Adaptive time management:**
-Allocate more search time when territory connectivity is low (critical positions) and less when connectivity is high (stable positions).
+**CorridorRatio / FunnelRatio:**
+Data shows these are lagging indicators (only 4-12% detectable at search leaf). NOT viable as eval signals. But could inform survival mode trigger or time management.
 
 ---
 

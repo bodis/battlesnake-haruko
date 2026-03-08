@@ -59,6 +59,16 @@ type VoronoiResult struct {
 	MyConnectivity  float64 // higher = wider territory, lower = corridors
 	OppConnectivity float64
 
+	// Diagnostic: territory depth profile (BFS distance from head)
+	MyNearTerritory  int // cells at BFS dist ≤ 3 (immediate surroundings)
+	MyFarTerritory   int // cells at BFS dist > 6 (deep territory)
+	OppNearTerritory int
+	OppFarTerritory  int
+
+	// Diagnostic: territory shape quality
+	MyCorridorCells  int // cells with ≤ 1 same-owner neighbor (dead-ends, narrow passages)
+	OppCorridorCells int
+
 	// Bottleneck detection (articulation points in territory subgraph)
 	MyThreatenedTerritory  int // cells behind live APs in our territory
 	OppThreatenedTerritory int // cells behind live APs in opponent territory
@@ -223,6 +233,88 @@ func (ws *voronoiWorkspace) findThreatenedTerritory(tag int8, rootCell int16, te
 	return threatened
 }
 
+// escapeWorkspace holds pre-allocated arrays for EscapeReachabilityPooled BFS.
+type escapeWorkspace struct {
+	blocked [maxBoardCells]bool
+	visited [maxBoardCells]bool
+	queue   [maxBoardCells]struct{ x, y int16 }
+}
+
+var escapePool = sync.Pool{
+	New: func() any { return &escapeWorkspace{} },
+}
+
+// EscapeReachabilityPooled counts cells reachable from a snake's head within
+// maxDist BFS steps. Zero-alloc (uses pooled workspace). Body segments block,
+// tails are passable (matching Voronoi semantics).
+func EscapeReachabilityPooled(g *GameSim, snakeIdx, maxDist int) int {
+	s := &g.Snakes[snakeIdx]
+	if !s.IsAlive() {
+		return 0
+	}
+
+	ws := escapePool.Get().(*escapeWorkspace)
+
+	size := g.Width * g.Height
+	for i := 0; i < size; i++ {
+		ws.blocked[i] = false
+		ws.visited[i] = false
+	}
+
+	// Mark interior body segments as blocked (same as Voronoi).
+	for i := range g.Snakes {
+		s2 := &g.Snakes[i]
+		if !s2.IsAlive() {
+			continue
+		}
+		end := len(s2.Body) - 1 // tail passable
+		for seg := 1; seg < end; seg++ {
+			c := s2.Body[seg]
+			if c.X >= 0 && c.X < g.Width && c.Y >= 0 && c.Y < g.Height {
+				ws.blocked[c.Y*g.Width+c.X] = true
+			}
+		}
+	}
+
+	head := s.Head()
+	if head.X < 0 || head.X >= g.Width || head.Y < 0 || head.Y >= g.Height {
+		escapePool.Put(ws)
+		return 0
+	}
+
+	ws.visited[head.Y*g.Width+head.X] = true
+	ws.queue[0] = struct{ x, y int16 }{int16(head.X), int16(head.Y)}
+	qLen := 1
+	count := 1
+	layerStart := 0
+
+	for d := 0; d < maxDist; d++ {
+		layerEnd := qLen
+		for qi := layerStart; qi < layerEnd; qi++ {
+			cur := ws.queue[qi]
+			cx, cy := int(cur.x), int(cur.y)
+			for _, dd := range [4][2]int{{0, 1}, {0, -1}, {-1, 0}, {1, 0}} {
+				nx, ny := cx+dd[0], cy+dd[1]
+				if nx < 0 || nx >= g.Width || ny < 0 || ny >= g.Height {
+					continue
+				}
+				ni := ny*g.Width + nx
+				if ws.visited[ni] || ws.blocked[ni] {
+					continue
+				}
+				ws.visited[ni] = true
+				ws.queue[qLen] = struct{ x, y int16 }{int16(nx), int16(ny)}
+				qLen++
+				count++
+			}
+		}
+		layerStart = layerEnd
+	}
+
+	escapePool.Put(ws)
+	return count
+}
+
 // VoronoiTerritory performs a multi-source BFS from all alive snake heads
 // and returns territory counts, food ownership, and partition status.
 // Cells reached by two snakes in the same BFS layer are unclaimed (ties).
@@ -316,7 +408,7 @@ func VoronoiTerritory(g *GameSim, myIdx int, skipBottleneck bool) VoronoiResult 
 		}
 	}
 
-	// Count territory and connectivity (avg same-owner neighbors per cell).
+	// Count territory, connectivity, depth profile, and corridor cells.
 	var result VoronoiResult
 	var myNeighborSum, oppNeighborSum int
 	for i := 0; i < size; i++ {
@@ -339,12 +431,31 @@ func VoronoiTerritory(g *GameSim, myIdx int, skipBottleneck bool) VoronoiResult 
 		if y < g.Height-1 && ws.owner[i+g.Width] == o {
 			neighbors++
 		}
+		d := ws.dist[i]
 		if o == myTag {
 			result.MyTerritory++
 			myNeighborSum += neighbors
+			if d <= 3 {
+				result.MyNearTerritory++
+			}
+			if d > 6 {
+				result.MyFarTerritory++
+			}
+			if neighbors <= 1 {
+				result.MyCorridorCells++
+			}
 		} else {
 			result.OppTerritory++
 			oppNeighborSum += neighbors
+			if d <= 3 {
+				result.OppNearTerritory++
+			}
+			if d > 6 {
+				result.OppFarTerritory++
+			}
+			if neighbors <= 1 {
+				result.OppCorridorCells++
+			}
 		}
 	}
 	if result.MyTerritory > 0 {

@@ -267,7 +267,7 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 	boardFill := float64(totalBody) / float64(g.Width*g.Height)
 	lateBlend := clamp01((boardFill - 0.30) / 0.20)
 
-	vr := VoronoiTerritory(g, myIdx, true)
+	vr := VoronoiTerritory(g, myIdx, true) // always compute escape for tracing
 	if vr.IsPartitioned && lateBlend < 0.5 {
 		lateBlend = 0.5
 	}

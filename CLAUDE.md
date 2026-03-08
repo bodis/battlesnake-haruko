@@ -12,7 +12,10 @@ See [ENGINE.md](ENGINE.md) for full architecture, eval signals, version history,
 - `logic/zobrist.go` — Zobrist hashing
 - `logic/tt.go` — transposition table
 - `logic/types.go` — `Coord`, `Direction`, `MoveSet`, `MaxSnakes=4`
+- `logic/diagnostic.go` — `EscapeReachability` (allocating, trace-only)
 - `logic/bench_test.go` — microbenchmarks
+- `trace.go` — JSONL trace recording (diagnostic fields included)
+- `cmd/analyze/main.go` — trace analysis (7 modes: summary, turning-points, deaths, wins, signals, trajectories, correlation, decision-points)
 
 ## Dev workflow
 - `make local` — build → start → 1v1 self-game → stop
@@ -34,11 +37,11 @@ When finishing an iteration:
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 - Board sizes: 7x7, 11x11, 19x19 all supported. `maxBoardCells=361`. Loops use `Width*Height`, no 11x11 cost.
 
-## Current state (Iter 32 current, Iter 21+22+27partial+28partial+29 dead ends)
-Territory connectivity signal: absolute MyConnectivity (avg same-owner neighbors per territory cell). 56-61% vs v31 (N=100). ~443-451 avg turns. Eval early ~1270ns (+132ns), late ~208ns (+13ns). Key discovery: delta signals neutral in self-play, absolute signals work.
+## Current state (Iter 33 planned, Iter 32 current)
+v32: Territory connectivity signal (absolute MyConnectivity). 56-61% vs v31. Diagnostic infrastructure added: VoronoiResult depth profile, EscapeReachability, trace diagnostic fields, analyze correlation + decision-points modes. Iter 33 planned: escape routes + far territory eval signals.
 
 ## Direction
-Territory ratio signal, enhanced self-confinement (scale penalty with connectivity), weight recalibration on new eval. See ROADMAP.md for future directions.
+Iter 33: Add escape routes + far territory signals to eval. Data shows eval is blind to positional collapse (92% detectable at search leaf but not scored). Test vs v32, v31, v28. See ROADMAP.md for full plan + data.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.
