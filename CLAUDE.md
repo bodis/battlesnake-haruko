@@ -37,11 +37,11 @@ When finishing an iteration:
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 - Board sizes: 7x7, 11x11, 19x19 all supported. `maxBoardCells=361`. Loops use `Width*Height`, no 11x11 cost.
 
-## Current state (Iter 33 planned, Iter 32 current)
-v32: Territory connectivity signal (absolute MyConnectivity). 56-61% vs v31. Diagnostic infrastructure added: VoronoiResult depth profile, EscapeReachability, trace diagnostic fields, analyze correlation + decision-points modes. Iter 33 planned: escape routes + far territory eval signals.
+## Current state (Iter 34 dead end, v32 current, Iter 35 next)
+v32: Territory connectivity signal (absolute MyConnectivity). 56-61% vs v31. Iter 33 dead end (escape/territory eval signals: 37-54%). Iter 34 dead end (bottleneck routing: 40-57%, Tarjan's too expensive for leaf eval). See ROADMAP.md for details.
 
 ## Direction
-Iter 33: Add escape routes + far territory signals to eval. Data shows eval is blind to positional collapse (92% detectable at search leaf but not scored). Test vs v32, v31, v28. See ROADMAP.md for full plan + data.
+Iter 35: Survival mode (longest path in confined space). When partitioned, switch from BRS to space-filling algorithm. Iter 36: Adaptive time management. See ROADMAP.md.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.

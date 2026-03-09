@@ -18,6 +18,11 @@ type voronoiWorkspace struct {
 	dfsStack    [maxBoardCells]tarjanFrame
 	tarjanDirty [maxBoardCells]int16 // list of cells touched by Tarjan (for fast cleanup)
 	tarjanCount int                  // number of dirty cells
+
+	// Head-side flood fill (bottleneck routing).
+	headQueue      [maxBoardCells]int16
+	headFillDirty  [maxBoardCells]int16 // cells visited by head-side BFS (for subtree cleanup)
+	headFillCount  int
 }
 
 type voronoiEntry struct {
@@ -72,6 +77,10 @@ type VoronoiResult struct {
 	// Bottleneck detection (articulation points in territory subgraph)
 	MyThreatenedTerritory  int // cells behind live APs in our territory
 	OppThreatenedTerritory int // cells behind live APs in opponent territory
+
+	// Bottleneck routing: cells reachable from head without crossing APs.
+	// 0 when skipBottleneck=true or no APs exist.
+	HeadSideRegion int
 }
 
 // findThreatenedTerritory runs iterative Tarjan's algorithm on the territory
@@ -231,6 +240,63 @@ func (ws *voronoiWorkspace) findThreatenedTerritory(tag int8, rootCell int16, te
 	}
 
 	return threatened
+}
+
+// headSideFloodFill BFS-floods from headCell through cells owned by tag that
+// are NOT articulation points. Returns the count of reachable cells (the
+// "head side" of any bottleneck). Uses ws.subtree[] as visited marker (safe to
+// reuse after Tarjan's completes) and ws.headQueue[] as BFS queue.
+func (ws *voronoiWorkspace) headSideFloodFill(tag int8, headCell int16, size, width int) int {
+	height := size / width
+
+	// Clean up subtree markers from previous head-side BFS.
+	for i := 0; i < ws.headFillCount; i++ {
+		ws.subtree[ws.headFillDirty[i]] = 0
+	}
+	ws.headFillCount = 0
+
+	// Seed with head cell (always included, even if it's an AP).
+	ws.subtree[headCell] = -1
+	ws.headQueue[0] = headCell
+	ws.headFillDirty[0] = headCell
+	ws.headFillCount = 1
+	qLen := 1
+	count := 1
+
+	for qi := 0; qi < qLen; qi++ {
+		cell := ws.headQueue[qi]
+		cx := int(cell) % width
+		cy := int(cell) / width
+
+		for d := 0; d < 4; d++ {
+			var nx, ny int
+			switch d {
+			case 0:
+				nx, ny = cx, cy+1
+			case 1:
+				nx, ny = cx, cy-1
+			case 2:
+				nx, ny = cx-1, cy
+			case 3:
+				nx, ny = cx+1, cy
+			}
+			if nx < 0 || nx >= width || ny < 0 || ny >= height {
+				continue
+			}
+			ni := int16(ny*width + nx)
+			if ws.owner[ni] != tag || ws.isAP[ni] || ws.subtree[ni] == -1 {
+				continue
+			}
+			ws.subtree[ni] = -1
+			ws.headQueue[qLen] = ni
+			ws.headFillDirty[ws.headFillCount] = ni
+			ws.headFillCount++
+			qLen++
+			count++
+		}
+	}
+
+	return count
 }
 
 // escapeWorkspace holds pre-allocated arrays for EscapeReachabilityPooled BFS.
@@ -492,6 +558,7 @@ func VoronoiTerritory(g *GameSim, myIdx int, skipBottleneck bool) VoronoiResult 
 		myHead := me.Head()
 		myRootCell := int16(myHead.Y*g.Width + myHead.X)
 		result.MyThreatenedTerritory = ws.findThreatenedTerritory(myTag, myRootCell, result.MyTerritory, size, g.Width)
+		result.HeadSideRegion = ws.headSideFloodFill(myTag, myRootCell, size, g.Width)
 		// Find first alive opponent for opponent bottleneck.
 		for i := range g.Snakes {
 			if i != myIdx && g.Snakes[i].IsAlive() {

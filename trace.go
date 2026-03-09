@@ -47,6 +47,7 @@ type traceRecord struct {
 	GrowthUrgency   float64 `json:"growth_urgency,omitempty"`
 	TailChase       float64 `json:"tail_chase,omitempty"`
 	Connectivity    float64 `json:"connectivity,omitempty"`
+	BottleneckRoute float64 `json:"bottleneck_route,omitempty"`
 	MyConnectivity  float64 `json:"my_connectivity,omitempty"`
 	OppConnectivity float64 `json:"opp_connectivity,omitempty"`
 	EarlyBlend      float64 `json:"early_blend,omitempty"`
@@ -61,6 +62,9 @@ type traceRecord struct {
 	// Diagnostic: territory shape
 	MyCorridorCells  int `json:"my_corridor_cells,omitempty"`
 	OppCorridorCells int `json:"opp_corridor_cells,omitempty"`
+
+	// Diagnostic: bottleneck routing
+	HeadSideRegion int `json:"head_side_region,omitempty"`
 
 	// Diagnostic: escape reachability (head-only BFS, 6 steps)
 	MyEscapeRoutes  int `json:"my_escape_routes,omitempty"`
@@ -192,6 +196,7 @@ func traceTurn(gameID, snakeID string, state GameState, sim *logic.GameSim, move
 		GrowthUrgency:   bd.GrowthUrgency,
 		TailChase:       bd.TailChase,
 		Connectivity:    bd.Connectivity,
+		BottleneckRoute: bd.BottleneckRoute,
 		MyConnectivity:  vr.MyConnectivity,
 		OppConnectivity: vr.OppConnectivity,
 		EarlyBlend:      bd.EarlyBlend,
@@ -202,6 +207,7 @@ func traceTurn(gameID, snakeID string, state GameState, sim *logic.GameSim, move
 		MyFarTerritory:   vr.MyFarTerritory,
 		OppNearTerritory: vr.OppNearTerritory,
 		OppFarTerritory:  vr.OppFarTerritory,
+		HeadSideRegion:   vr.HeadSideRegion,
 		MyCorridorCells:  vr.MyCorridorCells,
 		OppCorridorCells: vr.OppCorridorCells,
 		MyEscapeRoutes:   myEscape,

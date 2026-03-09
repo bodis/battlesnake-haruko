@@ -117,8 +117,8 @@ func Evaluate(g *GameSim, myIdx int) float64 {
 	lateBlend := clamp01((boardFill - 0.30) / 0.20) // 0.0@30%, 1.0@50%+
 
 	// Territory score with phase modulation.
-	// Always skip Tarjan AP — bottleneck signal was anti-correlated with wins
-	// (winners have more threatened territory due to aggressive squeezing).
+	// Always skip Tarjan AP — bottleneck routing (Iter 34) confirmed too expensive
+	// for hot path: Tarjan's ~2150ns/eval causes depth regression that offsets signal.
 	vr := VoronoiTerritory(g, myIdx, true)
 	if vr.IsPartitioned && lateBlend < 0.5 {
 		lateBlend = 0.5
@@ -223,6 +223,7 @@ type EvalBreakdown struct {
 	GrowthUrgency   float64
 	TailChase       float64
 	Connectivity    float64
+	BottleneckRoute float64
 	EarlyBlend      float64
 	LateBlend       float64
 }
@@ -267,7 +268,7 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 	boardFill := float64(totalBody) / float64(g.Width*g.Height)
 	lateBlend := clamp01((boardFill - 0.30) / 0.20)
 
-	vr := VoronoiTerritory(g, myIdx, true) // always compute escape for tracing
+	vr := VoronoiTerritory(g, myIdx, true)
 	if vr.IsPartitioned && lateBlend < 0.5 {
 		lateBlend = 0.5
 	}

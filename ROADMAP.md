@@ -10,10 +10,10 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iterations 1-20, 23-28, 30-33 (see below + ROADMAP_FINISHED.md) |
-| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%), Iter 28 partial (tail-aware BRS pruning: 43%), Iter 29 (hybrid BRS+MCTS: 2–46%), Iter 33 (escape/territory eval signals: 37–54%) |
+| **Completed** | Iterations 1-20, 23-28, 30-34 (see below + ROADMAP_FINISHED.md) |
+| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%), Iter 28 partial (tail-aware BRS pruning: 43%), Iter 29 (hybrid BRS+MCTS: 2–46%), Iter 33 (escape/territory eval signals: 37–54%), Iter 34 (bottleneck routing: 40-57%, depth regression) |
 | **Current** | v32 Territory connectivity: absolute MyConnectivity signal; 56-61% vs v31 (N=100); ~443-451 avg turns |
-| **Key insight** | Narrow corridors are NORMAL in late game, not a pathology to avoid. Escape/territory signals correlate with outcomes but reacting to them via eval weights causes conservative play (defensive) or cancels in self-play (offensive). The right response to confinement is a different ALGORITHM, not a different score. |
+| **Key insight** | Tarjan's AP is too expensive for hot-path eval (~2150ns/call). Any eval signal requiring Tarjan's causes depth regression that offsets the signal's benefit. Bottleneck detection must use cheaper proxies or operate outside the leaf evaluator. |
 
 ---
 
@@ -57,67 +57,35 @@
 
 ---
 
-## Iter 34 — Bottleneck-Aware Routing
+## Iter 34 — Bottleneck-Aware Routing (Dead End)
 
-**Status:** PLANNED
+**Status:** ❌ DEAD END — 40-57% across 5 configurations (depth regression)
 
-**Goal:** When our territory has a bottleneck (articulation point), detect which side of it our head is on and prefer the side with more space. This is a ROUTING decision — "go through the corridor to reach the larger area before it closes" — not an eval penalty for being in a corridor.
+**Goal:** Detect which side of a territory bottleneck (articulation point) our head is on and guide it toward the larger region. Directional routing signal, not a general narrowness penalty.
 
-### Problem Analysis
+**What was tried (A/B vs v32, N=100-200):**
 
-The engine frequently ends up on the wrong side of a bottleneck: its territory has a narrow passage connecting a small region (where our head is) to a large region (unreachable if the passage closes). The eval doesn't distinguish these — both sides count as "our territory." By the time the passage closes, the engine is trapped in the small region and dies.
+| Config | Gate (lateBlend) | Weight | vs v32 | vs v28 |
+|--------|-----------------|--------|--------|--------|
+| gate=0.3, w=10 | ≥0.3 (~36% fill) | 10.0 | **40%** | **39%** |
+| gate=0.5, w=10 | ≥0.5 (~40% fill) | 10.0 | **57%** (N=100) → **50.5%** (N=200) | **50%** |
+| gate=0.7, w=10 | ≥0.7 (~44% fill) | 10.0 | **44%** | **53%** |
+| gate=0.5, w=8 | ≥0.5 | 8.0 | **42%** | **48%** |
 
-This is different from Iter 33's approach:
-- Iter 33 tried to penalize "being in a narrow space" → caused conservative play
-- Iter 34 detects "which side of the bottleneck has more space" → guides movement toward the larger region
-- The signal is DIRECTIONAL (tells you WHERE to go), not just evaluative (this is bad)
+**Why it failed:**
 
-### Implementation Plan
+1. **Tarjan's AP is too expensive for leaf evaluation.** Full Tarjan's + head-side BFS adds ~2150ns per Voronoi call (1055ns → 3200ns). At every leaf node in BRS, this causes 1-2 plies of depth regression. The depth loss overwhelms any routing benefit.
 
-**Step 1: Head-side region analysis**
+2. **Phase-gating doesn't fully solve cost.** Even at gate=0.5 (half the game), leaf evals in late-game still pay 3x cost. The gate=0.5/w=10 config appeared to work (57% N=100) but was noise — N=200 confirmed 50.5%.
 
-We already have Tarjan's AP detection (in `voronoi.go`, currently skipped in eval). The `apCut` field tells us how many cells would be disconnected if an AP is removed. What's missing: determining which side of the AP our head is on.
+3. **The signal concept is sound but the implementation path is wrong.** Bottleneck routing requires Tarjan's, which is only viable outside the hot-path leaf evaluator. Possible future approaches: root-only computation (once per move), or a cheaper AP proxy.
 
-Approach:
-- After Tarjan's identifies APs in our territory, do a flood fill from our head WITHOUT crossing any AP
-- The size of this flood fill = our "accessible region" without bottleneck passages
-- Compare to total territory: if accessible region << total territory, we're on the wrong side
-
-**Step 2: Conditional eval signal**
-
-Only fires when:
-1. An AP exists in our territory (bottleneck detected)
-2. Our head-side region is significantly smaller than the other side (e.g., < 40% of territory)
-
-Signal: penalize being on the small side, proportional to the size imbalance.
-
-```
-headSideRatio = headSideRegion / myTerritory
-if headSideRatio < 0.4 {
-    score += wBottleneckRoute * lateBlend * (headSideRatio - 0.4)
-}
-```
-
-This is **not** a general narrowness penalty. It only fires when there's a specific topological problem (head on wrong side of bottleneck) and tells the engine to move toward the larger region.
-
-**Step 3: Cost management**
-
-- Tarjan's AP detection: ~1350ns (from Iter 23 benchmarks), too expensive for every eval
-- Option A: Only run Tarjan's when lateBlend > 0.5 (crowded board where bottlenecks matter)
-- Option B: Use the lighter flood-fill-from-head approach instead of full Tarjan's: BFS from head counting reachable cells in our territory, stop at narrow passages (cells with ≤ 1 same-owner neighbor). Cheaper than Tarjan's.
-- The head-side flood fill itself is cheap (~50-100ns for small regions)
-
-### Testing Plan
-
-- `make compare PREV=snapshots/haruko-69c43bb N=100` — vs v32. Must beat >55%.
-- `make compare PREV=snapshots/haruko-tailaware N=100` — vs v28. Generalization test.
-
-### Files to Modify
-
-| File | Change |
-|------|--------|
-| `logic/voronoi.go` | Head-side region analysis after AP detection |
-| `logic/eval.go` | Conditional bottleneck routing signal |
+**Infrastructure retained (no eval cost):**
+- `headSideFloodFill` method on voronoiWorkspace — zero-alloc BFS from head through non-AP territory cells
+- `HeadSideRegion` field in VoronoiResult — cells reachable from head without crossing APs
+- `headQueue`, `headFillDirty` arrays in voronoiWorkspace (pooled, 1.4KB)
+- `BottleneckRoute` field in EvalBreakdown + trace record — diagnostic only
+- All infrastructure is used only when `skipBottleneck=false` (currently always true in eval)
 
 ---
 
@@ -250,3 +218,4 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | 30 | `snapshots/haruko-c77fa1f` | ~433 | Remove bottleneck + phase confinement; 61% vs v28 |
 | 31 | `snapshots/haruko-e7f195f` | ~442 | Eval diet: strip dead signals + Voronoi fields; 55% vs v17, 57% vs v28 |
 | 32 | `snapshots/haruko-69c43bb` | ~443-451 | Territory connectivity (absolute MyConnectivity); 56-61% vs v31 |
+| 34 | — | — | ❌ Dead end: bottleneck routing (40-57%, depth regression) |

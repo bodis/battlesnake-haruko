@@ -128,6 +128,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 30 | Remove bottleneck + phase-dependent confinement | 61% vs v28, ~433 avg turns |
 | 31 | Eval diet: strip 3 dead signals + 6 Voronoi fields | 55% vs v17, 57% vs v28, ~442 avg turns |
 | 32 | Territory connectivity signal (absolute MyConnectivity) | 56-61% vs v31, ~443-451 avg turns |
+| 34 | Bottleneck-aware routing (head-side AP region) | ❌ Dead end (40-57%, depth regression) |
 
 ## Dead Ends
 
@@ -162,6 +163,9 @@ Even with correct tail-retraction logic in `isSafeDir`, using it for BRS move pr
 
 ### Hybrid BRS+MCTS root-level vote (Iter 29): 2–46%
 Flat depth-1 MCTS (UCB1, random opponent moves, xorshift64 PRNG, ~52K sims/50ms) combined with BRS at root level. Tested 6 configurations: (1) Sequential 70/30 budget split with 0.7/0.3 weighted combination: 2%. (2) Sequential 95/5 budget split: 30% (pure budget loss — BRS is extremely sensitive to even 5% budget reduction). (3) Exact-tie-only tiebreaker with 1ms MCTS: 46%. (4) Concurrent goroutines: data race on sync.Pool (pooledGameSim.poolRef). Root causes: (a) BRS depth is the engine's primary strength and is hypersensitive to budget reduction — even 15ms less budget causes measurable depth regression. (b) Depth-1 MCTS with random opponents produces systematically wrong move preferences against optimal play — it favors moves good against weak play, which are bad against strong opponents. (c) Even as a tiebreaker on exact BRS score ties, MCTS adds noise that hurts. (d) Concurrent execution hits data races on the shared gameSimPool. Infrastructure retained: `BRSResult`, `bestMoveBRS()`, `mctsSearch()`, `mctsRoot` — available for future experimentation.
+
+### Bottleneck routing via Tarjan's in leaf eval (Iter 34): 40-57% (depth regression)
+Head-side flood fill from snake head through non-AP territory cells, penalizing when head is on the small side of an AP. Signal concept is directional (guides toward larger region, not general narrowness penalty). Failed because Tarjan's AP detection costs ~2150ns/eval — 3x the Voronoi baseline. At every BRS leaf node, this causes 1-2 plies of depth regression. Phase-gating (running Tarjan's only in late game) reduces frequency but late-game depth is the most critical. N=200 confirmation showed gate=0.5/w=10 was 50.5% (initial N=100 of 57% was noise). Any eval signal requiring Tarjan's is not viable for leaf evaluation. Infrastructure retained for diagnostic/root-only use.
 
 ### Key principle
 Every past win came from deeper search or better eval. Search mechanics (pruning, ordering) are saturated at BF=4. The remaining lever is eval quality — but new signals must add genuinely new information, not restate what Voronoi territory already captures. Dominance-based weight modulation is also ineffective because both sides of self-play share the same eval. Sound pruning (wall-only) is a valid third lever: it reduces BF without losing information.
@@ -207,6 +211,9 @@ TailChase showed δ=0.00 between wins and losses in trace analysis, suggesting i
 
 ### Absolute signals beat delta signals in self-play (Iter 32)
 Connectivity delta (MyConnectivity - OppConnectivity) was neutral in self-play (50-52%), just like Iter 22's aggression modulation. Absolute MyConnectivity (rewarding our own wide territory regardless of opponent) won 56-61%. In self-play where both sides share the same eval, delta signals cancel out symmetrically. Absolute signals change move preferences asymmetrically because positions differ.
+
+### Tarjan's AP is not viable for leaf evaluation (Iter 34)
+Tarjan's articulation point detection adds ~2150ns per Voronoi call (1055ns → 3200ns = 3x cost). Running it at every BRS leaf node causes 1-2 plies of depth regression. Phase-gating (only in late game) doesn't help enough — late-game depth is the most critical for survival. The bottleneck routing signal was directional (head-side region analysis, not a general narrowness penalty) and conceptually sound, but N=200 confirmation showed 50.5% vs v32. Any future bottleneck-based signal must avoid Tarjan's in the hot path — either compute once at root per move, or use a cheaper proxy (e.g., corridor-cell-based detection instead of full AP decomposition).
 
 ### Phase-gating eval cost for depth (Iter 26)
 Skipping Tarjan's AP in early game (`lateBlend < 0.1`) recovers 57% of Voronoi cost (2414ns → 1051ns), translating to ~2 extra search plies. Result: 67% vs v24 — the strongest single-iteration improvement since Iter 8. The skipped signal contributes at most ~1.65 eval points at the threshold — well below noise floor. This confirms that early-game search depth is critical: the engine needs to see territory flips coming, and cheaper eval = more depth = better foresight.
