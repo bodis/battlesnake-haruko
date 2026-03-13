@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package battlesnake_env;
+
+option go_package = "github.com/bodist/haruko/cmd/rlenv/envpb";
+
+service BattlesnakeEnv {
+  // Configure sets up the environment parameters.
+  rpc Configure(ConfigRequest) returns (ConfigResponse);
+  // Reset resets specified environments and returns observations.
+  rpc Reset(ResetRequest) returns (Observations);
+  // Step takes actions in specified environments and returns results.
+  rpc Step(StepRequest) returns (StepResponse);
+}
+
+message ConfigRequest {
+  int32 num_envs = 1;
+  int32 board_width = 2;
+  int32 board_height = 3;
+  string opponent_type = 4;   // "none", "random", "brs"
+  int32 max_turns = 5;        // 0 = default (500)
+  int32 brs_budget_ms = 6;    // BRS budget in ms (default 50)
+}
+
+message ConfigResponse {
+  int32 num_envs = 1;
+  int32 spatial_channels = 2; // 11
+  int32 spatial_size = 3;     // 21
+  int32 num_scalars = 4;      // 8
+  int32 num_actions = 5;      // 4
+}
+
+message ResetRequest {
+  repeated int32 env_ids = 1; // empty = reset all
+}
+
+message Observations {
+  // Flat float32 arrays, one per env.
+  // spatial: [num_envs * channels * size * size]
+  repeated float spatial = 1 [packed = true];
+  // scalars: [num_envs * num_scalars]
+  repeated float scalars = 2 [packed = true];
+  // action_mask: [num_envs * 4] (true = valid action)
+  repeated bool action_mask = 3 [packed = true];
+  repeated int32 env_ids = 4 [packed = true];
+}
+
+message StepRequest {
+  repeated int32 env_ids = 1 [packed = true];
+  repeated int32 actions = 2 [packed = true]; // 0=Up, 1=Down, 2=Left, 3=Right
+}
+
+message StepResponse {
+  Observations observations = 1;
+  repeated float rewards = 2 [packed = true];
+  repeated bool dones = 3 [packed = true];
+  // Info per env (JSON-encoded for flexibility).
+  repeated string infos = 4;
+}

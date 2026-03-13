@@ -147,7 +147,76 @@ Key insight: our tail moves as we move, opening cells behind us. So in a 20-cell
 
 ---
 
-## Iter 36 — Adaptive Time Management
+## Iter 36 — Tail Reachability: Loop Capability Signal
+
+**Status:** PLANNED
+
+**Goal:** Replace the crude Manhattan tail-chase signal with actual BFS tail reachability through owned territory. The key insight: a snake that cannot reach its own tail is on a death timer regardless of territory size. This property is completely invisible to the current eval — Voronoi measures territory quantity, connectivity measures territory width, but nothing measures whether the snake can sustain a survival loop.
+
+### Problem Analysis
+
+The current tail chase signal uses Manhattan distance from head to tail. This is misleading: if the path to the tail is blocked by body segments, Manhattan distance is 3 but actual path distance is ∞. The eval scores the position as "tail is nearby, good" when in reality the snake is trapped in a dead-end pocket and will die in N turns (where N = reachable cells).
+
+From the group analysis (Snake, Martha, Gabor):
+- Territory SIZE is well-captured by Voronoi. Territory LOOPABILITY is not captured at all.
+- A snake that can reach its tail can survive indefinitely (tail opens space as snake moves). A snake that can't is on a countdown.
+- This is asymmetric by nature: head and tail positions differ per snake, so BFS path distance is NOT a delta signal that cancels in self-play.
+- Actively cutting the opponent's loop is the offensive counterpart — but defensive loop maintenance creates natural offensive pressure via Voronoi squeeze.
+
+### Implementation Plan
+
+**Step 1: BFS tail reachability**
+
+After VoronoiTerritory runs (owner array available), BFS from head through cells owned by us:
+- Early termination when tail cell is found → O(reachable cells), not O(board)
+- Returns: reachable (bool) + BFS distance (int, ∞ when unreachable)
+- Can reuse Voronoi owner array — no extra allocation needed
+- Cost: ~100-300ns, much cheaper than Tarjan's (~2150ns)
+
+**Step 2: Replace Manhattan tail chase**
+
+Current: `tailDist := abs(head.X-tail.X) + abs(head.Y-tail.Y)`
+New: `tailDist := bfsTailDist(voronoiOwner, head, tail, width, height)`
+
+When tail is unreachable: `tailDist = ∞` → tail chase bonus = 0 + heavy cut-off penalty.
+
+**Step 3: Phase-gating**
+
+Only compute when `lateBlend > 0.3` — early game territories are open, loopability is trivially maintained. Late game is where loop breaks matter.
+
+**Step 4: Eval signals**
+
+Two signals from this data:
+- **Tail reachability penalty** (defensive): heavy penalty when own tail unreachable. Absolute signal, works in self-play.
+- **Opponent tail reachability reward** (offensive, optional): bonus when opponent's tail unreachable. Test separately — offensive signals have been marginal historically (Iter 33: 54% best case). Start with defensive only.
+
+**Connection to Iter 35:** Tail unreachability is a natural trigger for survival mode. If `tailReachable == false`, the snake is already in a confined pocket — switch to space-filling DFS. Iter 36 provides the detection; Iter 35 provides the response.
+
+### Why This Is Different from Previous Attempts
+
+| Attempt | What it detected | Why it failed |
+|---------|-----------------|---------------|
+| Iter 33 (escape routes) | Narrow corridors | Lagging indicator — corridors are normal in late game, both winners and losers have them |
+| Iter 34 (Tarjan's AP) | Territory bottlenecks | Too expensive for leaf eval (~2150ns → depth regression) |
+| **Iter 36 (tail reachability)** | Loop capability | Cheap BFS (~200ns), genuinely new info, position-asymmetric |
+
+### Testing Plan
+
+- `make compare PREV=snapshots/haruko-69c43bb N=100` — vs v32.
+- Phase 1: defensive signal only (own tail reachability)
+- Phase 2: if Phase 1 wins, add opponent tail reachability reward
+- Trace analysis: verify signal fires in the right situations (late-game confinement, not early game)
+
+### Files to Modify
+
+| File | Change |
+|------|--------|
+| `logic/voronoi.go` | Add `bfsTailDist` using existing owner array from Voronoi workspace |
+| `logic/eval.go` | Replace Manhattan tail chase with BFS tail dist; add cut-off penalty |
+
+---
+
+## Iter 37 — Adaptive Time Management
 
 **Status:** PLANNED (lower priority)
 

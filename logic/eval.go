@@ -359,6 +359,16 @@ func EvaluateDetailed(g *GameSim, myIdx int) EvalBreakdown {
 	return b
 }
 
+// IsSafeDir is the exported wrapper for isSafeDir.
+func IsSafeDir(g *GameSim, s *SimSnake, d Direction) bool {
+	return isSafeDir(g, s, d)
+}
+
+// SafeMoveCount is the exported wrapper for safeMoveCount.
+func SafeMoveCount(g *GameSim, s *SimSnake) int {
+	return safeMoveCount(g, s)
+}
+
 func abs(x int) int {
 	if x < 0 {
 		return -x

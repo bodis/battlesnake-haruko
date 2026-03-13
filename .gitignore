@@ -43,6 +43,17 @@ traces/
 # .idea/
 # .vscode/
 
+# Stale binaries at repo root
+/rlenv
+
+# RL training artifacts
+rl/.venv/
+rl/checkpoints/
+rl/logs/
+rl/proto/*_pb2*.py
+rl/proto/__pycache__/
+rl/**/__pycache__/
+
 # Claude Code — local/user-specific files
 .claude/settings.local.json
 .claude/projects/
