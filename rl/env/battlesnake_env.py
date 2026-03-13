@@ -1,6 +1,9 @@
 """Gymnasium/SB3 environment wrapping the Go gRPC env server."""
 
 import json
+import mmap
+import os
+import struct
 from typing import Any
 
 import grpc
@@ -17,6 +20,9 @@ class BattlesnakeVecEnv(VecEnv):
 
     Uses SB3's VecEnv interface (not Gymnasium's VectorEnv) for direct
     compatibility with PPO and other SB3 algorithms.
+
+    When the Go server provides a shared memory path, observations and rewards
+    are read directly from mmap (zero-copy) instead of gRPC protobuf payloads.
     """
 
     def __init__(
@@ -71,16 +77,120 @@ class BattlesnakeVecEnv(VecEnv):
 
         self._env_ids_i32 = list(range(num_envs))
         self._actions_buf = np.zeros(num_envs, dtype=np.int32)
+        self._turn_counts = np.zeros(num_envs, dtype=np.int32)
+        self._step_id = 0
+
+        # Set up shared memory if available.
+        self._shm_fd = None
+        self._shm_mm = None
+        self._shm_spatial = None
+        self._shm_scalars = None
+        self._shm_masks = None
+        self._shm_rewards = None
+        self._shm_dones = None
+        self._shm_actions = None
+        self._use_shm = False
+
+        if cfg_resp.shm_path:
+            self._init_shm(cfg_resp.shm_path, num_envs)
+
+    def _init_shm(self, path: str, n: int) -> None:
+        """Open the shared memory file and create numpy views."""
+        self._shm_fd = os.open(path, os.O_RDWR)
+        file_size = os.fstat(self._shm_fd).st_size
+        self._shm_mm = mmap.mmap(self._shm_fd, file_size)
+
+        # Read header offsets (stored by Go server).
+        header = self._shm_mm[:64]
+        magic = header[0:4]
+        assert magic == b"HSHM", f"Bad shm magic: {magic}"
+
+        spatial_off = struct.unpack_from("<I", header, 24)[0]
+        scalars_off = struct.unpack_from("<I", header, 28)[0]
+        masks_off = struct.unpack_from("<I", header, 32)[0]
+        rewards_off = struct.unpack_from("<I", header, 36)[0]
+        dones_off = struct.unpack_from("<I", header, 40)[0]
+        actions_off = struct.unpack_from("<I", header, 44)[0]
+
+        ch, h, w = self._spatial_shape
+        spatial_count = n * ch * h * w
+
+        self._shm_spatial = np.frombuffer(
+            self._shm_mm, dtype=np.float32, offset=spatial_off, count=spatial_count
+        ).reshape(n, ch, h, w)
+        self._shm_scalars = np.frombuffer(
+            self._shm_mm, dtype=np.float32, offset=scalars_off, count=n * self._num_scalars
+        ).reshape(n, self._num_scalars)
+        self._shm_masks = np.frombuffer(
+            self._shm_mm, dtype=np.uint8, offset=masks_off, count=n * 4
+        ).reshape(n, 4)
+        self._shm_rewards = np.frombuffer(
+            self._shm_mm, dtype=np.float32, offset=rewards_off, count=n
+        )
+        self._shm_dones = np.frombuffer(
+            self._shm_mm, dtype=np.uint8, offset=dones_off, count=n
+        )
+        self._shm_actions = np.frombuffer(
+            self._shm_mm, dtype=np.int32, offset=actions_off, count=n
+        )
+
+        self._use_shm = True
+
+    def _read_shm_obs(self) -> dict:
+        """Read observations from shared memory views (copy to avoid mmap aliasing)."""
+        return {
+            "spatial": self._shm_spatial.copy(),
+            "scalars": self._shm_scalars.copy(),
+            "action_mask": self._shm_masks.astype(np.int8).copy(),
+        }
 
     def reset(self) -> dict:
         resp = self._stub.Reset(pb.ResetRequest(env_ids=self._env_ids_i32))
-        obs = self._parse_batch_obs(resp)
-        return obs
+        self._turn_counts[:] = 0
+        if self._use_shm:
+            return self._read_shm_obs()
+        return self._parse_batch_obs(resp)
 
     def step_async(self, actions: np.ndarray) -> None:
         self._actions_buf[:] = actions
 
     def step_wait(self) -> tuple:
+        if self._use_shm:
+            return self._step_wait_shm()
+        return self._step_wait_grpc()
+
+    def _step_wait_shm(self) -> tuple:
+        """Step using shared memory for data transfer."""
+        # Write actions into mmap.
+        self._shm_actions[:] = self._actions_buf
+
+        # Signal the Go server to step.
+        self._step_id += 1
+        self._stub.StepSignal(pb.StepSignalRequest(step_id=self._step_id))
+
+        # Read results from mmap.
+        obs = self._read_shm_obs()
+        rewards = self._shm_rewards.copy()
+        dones = self._shm_dones.astype(bool)
+
+        # Update turn counts and build infos.
+        self._turn_counts += 1
+        infos = []
+        for i in range(self.num_envs):
+            info = {"turn": int(self._turn_counts[i])}
+            if dones[i]:
+                info["terminal_observation"] = {
+                    "spatial": np.zeros(self._spatial_shape, dtype=np.float32),
+                    "scalars": np.zeros(self._num_scalars, dtype=np.float32),
+                    "action_mask": np.ones(4, dtype=np.int8),
+                }
+                self._turn_counts[i] = 0
+            infos.append(info)
+
+        return obs, rewards, dones, infos
+
+    def _step_wait_grpc(self) -> tuple:
+        """Step using gRPC protobuf payloads (fallback)."""
         actions_list = [int(a) for a in self._actions_buf]
         resp = self._stub.Step(
             pb.StepRequest(env_ids=self._env_ids_i32, actions=actions_list)
@@ -108,7 +218,19 @@ class BattlesnakeVecEnv(VecEnv):
         return obs, rewards, dones, infos
 
     def close(self) -> None:
-        pass
+        # Release numpy views before closing mmap.
+        self._shm_spatial = None
+        self._shm_scalars = None
+        self._shm_masks = None
+        self._shm_rewards = None
+        self._shm_dones = None
+        self._shm_actions = None
+        if self._shm_mm is not None:
+            self._shm_mm.close()
+            self._shm_mm = None
+        if self._shm_fd is not None:
+            os.close(self._shm_fd)
+            self._shm_fd = None
 
     def env_is_wrapped(self, wrapper_class, indices=None):
         return [False] * self.num_envs

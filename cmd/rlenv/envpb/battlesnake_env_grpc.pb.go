@@ -19,9 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BattlesnakeEnv_Configure_FullMethodName = "/battlesnake_env.BattlesnakeEnv/Configure"
-	BattlesnakeEnv_Reset_FullMethodName     = "/battlesnake_env.BattlesnakeEnv/Reset"
-	BattlesnakeEnv_Step_FullMethodName      = "/battlesnake_env.BattlesnakeEnv/Step"
+	BattlesnakeEnv_Configure_FullMethodName  = "/battlesnake_env.BattlesnakeEnv/Configure"
+	BattlesnakeEnv_Reset_FullMethodName      = "/battlesnake_env.BattlesnakeEnv/Reset"
+	BattlesnakeEnv_Step_FullMethodName       = "/battlesnake_env.BattlesnakeEnv/Step"
+	BattlesnakeEnv_StepSignal_FullMethodName = "/battlesnake_env.BattlesnakeEnv/StepSignal"
 )
 
 // BattlesnakeEnvClient is the client API for BattlesnakeEnv service.
@@ -34,6 +35,8 @@ type BattlesnakeEnvClient interface {
 	Reset(ctx context.Context, in *ResetRequest, opts ...grpc.CallOption) (*Observations, error)
 	// Step takes actions in specified environments and returns results.
 	Step(ctx context.Context, in *StepRequest, opts ...grpc.CallOption) (*StepResponse, error)
+	// StepSignal signals a step via shared memory (actions/obs in mmap).
+	StepSignal(ctx context.Context, in *StepSignalRequest, opts ...grpc.CallOption) (*StepSignalResponse, error)
 }
 
 type battlesnakeEnvClient struct {
@@ -74,6 +77,16 @@ func (c *battlesnakeEnvClient) Step(ctx context.Context, in *StepRequest, opts .
 	return out, nil
 }
 
+func (c *battlesnakeEnvClient) StepSignal(ctx context.Context, in *StepSignalRequest, opts ...grpc.CallOption) (*StepSignalResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StepSignalResponse)
+	err := c.cc.Invoke(ctx, BattlesnakeEnv_StepSignal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BattlesnakeEnvServer is the server API for BattlesnakeEnv service.
 // All implementations must embed UnimplementedBattlesnakeEnvServer
 // for forward compatibility.
@@ -84,6 +97,8 @@ type BattlesnakeEnvServer interface {
 	Reset(context.Context, *ResetRequest) (*Observations, error)
 	// Step takes actions in specified environments and returns results.
 	Step(context.Context, *StepRequest) (*StepResponse, error)
+	// StepSignal signals a step via shared memory (actions/obs in mmap).
+	StepSignal(context.Context, *StepSignalRequest) (*StepSignalResponse, error)
 	mustEmbedUnimplementedBattlesnakeEnvServer()
 }
 
@@ -102,6 +117,9 @@ func (UnimplementedBattlesnakeEnvServer) Reset(context.Context, *ResetRequest) (
 }
 func (UnimplementedBattlesnakeEnvServer) Step(context.Context, *StepRequest) (*StepResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Step not implemented")
+}
+func (UnimplementedBattlesnakeEnvServer) StepSignal(context.Context, *StepSignalRequest) (*StepSignalResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StepSignal not implemented")
 }
 func (UnimplementedBattlesnakeEnvServer) mustEmbedUnimplementedBattlesnakeEnvServer() {}
 func (UnimplementedBattlesnakeEnvServer) testEmbeddedByValue()                        {}
@@ -178,6 +196,24 @@ func _BattlesnakeEnv_Step_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BattlesnakeEnv_StepSignal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StepSignalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BattlesnakeEnvServer).StepSignal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BattlesnakeEnv_StepSignal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BattlesnakeEnvServer).StepSignal(ctx, req.(*StepSignalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BattlesnakeEnv_ServiceDesc is the grpc.ServiceDesc for BattlesnakeEnv service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -196,6 +232,10 @@ var BattlesnakeEnv_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Step",
 			Handler:    _BattlesnakeEnv_Step_Handler,
+		},
+		{
+			MethodName: "StepSignal",
+			Handler:    _BattlesnakeEnv_StepSignal_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

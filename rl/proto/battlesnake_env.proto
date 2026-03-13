@@ -11,6 +11,8 @@ service BattlesnakeEnv {
   rpc Reset(ResetRequest) returns (Observations);
   // Step takes actions in specified environments and returns results.
   rpc Step(StepRequest) returns (StepResponse);
+  // StepSignal signals a step via shared memory (actions/obs in mmap).
+  rpc StepSignal(StepSignalRequest) returns (StepSignalResponse);
 }
 
 message ConfigRequest {
@@ -28,6 +30,7 @@ message ConfigResponse {
   int32 spatial_size = 3;     // 21
   int32 num_scalars = 4;      // 8
   int32 num_actions = 5;      // 4
+  string shm_path = 6;       // shared memory file path (empty = not using mmap)
 }
 
 message ResetRequest {
@@ -56,4 +59,12 @@ message StepResponse {
   repeated bool dones = 3 [packed = true];
   // Info per env (JSON-encoded for flexibility).
   repeated string infos = 4;
+}
+
+message StepSignalRequest {
+  uint64 step_id = 1;
+}
+
+message StepSignalResponse {
+  uint64 step_id = 1;
 }

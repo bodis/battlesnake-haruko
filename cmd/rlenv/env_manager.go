@@ -220,13 +220,32 @@ func spawnFoodInitial(w, h, n int, rng *rand.Rand, occupied map[logic.Coord]bool
 
 // Configure creates a new set of environments with the given parameters.
 func (s *EnvServer) Configure(ctx context.Context, req *pb.ConfigRequest) (*pb.ConfigResponse, error) {
+	// Clean up previous shm if any.
+	if s.shm != nil {
+		s.shm.closeSHM()
+		s.shm = nil
+	}
+
 	s.mgr = NewEnvManager(req)
+
+	// Create shared memory.
+	var shmPath string
+	if s.shmPath != "" {
+		shm, err := createSHM(s.shmPath, s.mgr.numEnvs)
+		if err != nil {
+			return nil, fmt.Errorf("shm init: %w", err)
+		}
+		s.shm = shm
+		shmPath = s.shmPath
+	}
+
 	return &pb.ConfigResponse{
 		NumEnvs:         int32(s.mgr.numEnvs),
 		SpatialChannels: spatialChannels,
 		SpatialSize:     spatialSize,
 		NumScalars:      numScalars,
 		NumActions:      numActions,
+		ShmPath:         shmPath,
 	}, nil
 }
 
@@ -261,6 +280,11 @@ func (s *EnvServer) Reset(ctx context.Context, req *pb.ResetRequest) (*pb.Observ
 		}(idx)
 	}
 	wg.Wait()
+
+	// Also write to shm if available.
+	if s.shm != nil {
+		s.writeObsToSHM(envIDs)
+	}
 
 	return s.collectObservations(envIDs), nil
 }
@@ -406,6 +430,97 @@ func (s *EnvServer) collectObservations(envIDs []int32) *pb.Observations {
 		ActionMask: allMask,
 		EnvIds:     envIDs,
 	}
+}
+
+// writeObsToSHM writes observations for the given envs into shared memory.
+func (s *EnvServer) writeObsToSHM(envIDs []int32) {
+	for _, id := range envIDs {
+		idx := int(id)
+		if idx < 0 || idx >= s.mgr.numEnvs {
+			continue
+		}
+		e := s.mgr.envs[idx]
+		e.mu.Lock()
+		spatial, scalars := computeObservation(e.game, e.myIdx)
+		mask := computeActionMask(e.game, e.myIdx)
+		e.mu.Unlock()
+
+		s.shm.writeSpatial(idx, spatial)
+		s.shm.writeScalars(idx, scalars)
+		s.shm.writeMask(idx, mask)
+	}
+}
+
+// StepSignal performs a step using shared memory for data transfer.
+func (s *EnvServer) StepSignal(ctx context.Context, req *pb.StepSignalRequest) (*pb.StepSignalResponse, error) {
+	if s.mgr == nil {
+		return nil, fmt.Errorf("not configured; call Configure first")
+	}
+	if s.shm == nil {
+		return nil, fmt.Errorf("shared memory not initialized")
+	}
+
+	n := s.mgr.numEnvs
+	envIDs := make([]int32, n)
+	for i := range envIDs {
+		envIDs[i] = int32(i)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			action := logic.Direction(s.shm.readAction(idx))
+
+			e := s.mgr.envs[idx]
+			e.mu.Lock()
+			defer e.mu.Unlock()
+
+			// Save previous state for reward computation.
+			e.prevGame = e.game.Clone()
+
+			action = correctAction(e.game, e.myIdx, action)
+
+			var ms logic.MoveSet
+			ms.Dir[e.myIdx] = action
+			ms.Has[e.myIdx] = true
+
+			if e.oppIdx >= 0 && e.game.Snakes[e.oppIdx].IsAlive() && s.mgr.oppPolicy != nil {
+				oppDir := s.mgr.oppPolicy.ChooseMove(e.game, e.oppIdx)
+				ms.Dir[e.oppIdx] = oppDir
+				ms.Has[e.oppIdx] = true
+			}
+
+			e.game.Step(ms)
+			e.turn++
+
+			maybeSpawnFood(e.game, e.rng)
+
+			reward := computeReward(e.game, e.prevGame, e.myIdx, e.oppIdx, s.mgr.hasOpponent())
+			s.shm.writeReward(idx, reward)
+
+			agentDead := !e.game.Snakes[e.myIdx].IsAlive()
+			maxTurnsReached := e.turn >= s.mgr.maxTurns
+			oppDead := false
+			if e.oppIdx >= 0 && !e.game.Snakes[e.oppIdx].IsAlive() {
+				oppDead = true
+			}
+			done := agentDead || maxTurnsReached || oppDead
+			s.shm.writeDone(idx, done)
+
+			if done {
+				e.done = true
+				s.mgr.resetEnv(e)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// Write observations (post-reset for done envs).
+	s.writeObsToSHM(envIDs)
+
+	return &pb.StepSignalResponse{StepId: req.StepId}, nil
 }
 
 // terminalReason returns a human-readable reason for episode termination.

@@ -6,30 +6,32 @@ Python (uv-managed) + Go gRPC env server.
 ## Architecture
 
 ```
-Python (rl/)                    gRPC :50051              Go (cmd/rlenv/)
+Python (rl/)                    mmap + gRPC              Go (cmd/rlenv/)
 ┌────────────────┐          ┌──────────────┐          ┌─────────────────┐
-│ SB3 PPO        │◄────────►│ Configure    │◄────────►│ EnvManager      │
-│ CNN extractor  │          │ Reset        │          │ N×GameSim       │
-│ MPS device     │          │ Step         │          │ observation.go  │
-└────────────────┘          └──────────────┘          │ reward.go       │
-                                                      │ food_spawn.go   │
-                                                      │ opponent.go     │
+│ SB3 PPO        │◄─mmap───►│ /tmp/haruko  │◄─mmap───►│ EnvManager      │
+│ CNN extractor  │          │ -rl-shm      │          │ N×GameSim       │
+│ MPS device     │◄─gRPC───►│ Configure    │◄─gRPC───►│ shm.go          │
+└────────────────┘          │ Reset        │          │ observation.go  │
+                            │ StepSignal   │          │ reward.go       │
+                            │ Step (compat)│          │ food_spawn.go   │
+                            └──────────────┘          │ opponent.go     │
                                                       └─────────────────┘
 ```
 
 ## Key files
 
 ### Go server (`cmd/rlenv/`)
-- `main.go` — gRPC server, flags: `-port 50051`, `-num-envs 256`
-- `env_manager.go` — `EnvManager`, parallel `Step()`, auto-reset, `Configure/Reset/Step` handlers
+- `main.go` — gRPC server, flags: `-port 50051`, `-num-envs 256`, `-shm-path /tmp/haruko-rl-shm`
+- `env_manager.go` — `EnvManager`, parallel `Step()`/`StepSignal()`, auto-reset, mmap obs writing
+- `shm.go` — mmap shared memory: layout, create/close, read/write helpers
 - `observation.go` — head-centered 21×21 spatial (11ch CHW), 8 scalars, action mask, `correctAction()`
-- `reward.go` — solo rewards (death -10, survive +10, food +0.5) and competitive rewards
+- `reward.go` — solo rewards (death -1, alive +0.01, hunger gradient) and competitive rewards
 - `food_spawn.go` — 15% chance/turn, min 1
 - `opponent.go` — `RandomPolicy`, `BRSPolicy`
 - `envpb/` — generated protobuf code
 
 ### Python (`rl/`)
-- `env/battlesnake_env.py` — `BattlesnakeVecEnv` (SB3 `VecEnv` over gRPC)
+- `env/battlesnake_env.py` — `BattlesnakeVecEnv` (SB3 `VecEnv`, mmap + gRPC fallback)
 - `model/features.py` — `BattlesnakeFeatureExtractor` (CNN, MPS-compatible, no AdaptiveAvgPool)
 - `model/network.py` — `BattlesnakeActorCritic` (standalone, for inference server)
 - `training/train.py` — PPO entry point, checkpointing, resume, TensorBoard
@@ -66,10 +68,12 @@ Or use `make` targets: `make server`, `make train-solo`, `make serve MODEL=...`
 2. **`final_policy.pt`** — PyTorch state dict + metadata dict. For inference server.
 3. **`battlesnake_*_steps.zip`** — Periodic checkpoints every 50K steps.
 
-## Performance baseline (M4 Max)
-- MPS: ~4100 fps, CPU: ~160 fps (10× speedup)
-- 256 envs, 2048 n_steps, 512 batch_size
-- Solo 500K steps → 146 avg turns (not converged, needs more training)
+## Performance (M4 Max)
+- Env stepping: ~200K fps (mmap), was ~4100 fps (gRPC protobuf) — 50x improvement
+- Training throughput: ~408 steps/s (MPS forward/backward is now the bottleneck)
+- ~250K steps per 10-minute training chunk
+- 256 envs, 2048 n_steps, 256 batch_size
+- v0.1 baseline: 146 avg turns after 500K steps (old reward, gRPC)
 
 ## Conventions
 - All Python runs via `uv run` from `rl/` directory

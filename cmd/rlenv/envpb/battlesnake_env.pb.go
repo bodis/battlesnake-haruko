@@ -112,6 +112,7 @@ type ConfigResponse struct {
 	SpatialSize     int32                  `protobuf:"varint,3,opt,name=spatial_size,json=spatialSize,proto3" json:"spatial_size,omitempty"`             // 21
 	NumScalars      int32                  `protobuf:"varint,4,opt,name=num_scalars,json=numScalars,proto3" json:"num_scalars,omitempty"`                // 8
 	NumActions      int32                  `protobuf:"varint,5,opt,name=num_actions,json=numActions,proto3" json:"num_actions,omitempty"`                // 4
+	ShmPath         string                 `protobuf:"bytes,6,opt,name=shm_path,json=shmPath,proto3" json:"shm_path,omitempty"`                          // shared memory file path (empty = not using mmap)
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -179,6 +180,13 @@ func (x *ConfigResponse) GetNumActions() int32 {
 		return x.NumActions
 	}
 	return 0
+}
+
+func (x *ConfigResponse) GetShmPath() string {
+	if x != nil {
+		return x.ShmPath
+	}
+	return ""
 }
 
 type ResetRequest struct {
@@ -418,6 +426,94 @@ func (x *StepResponse) GetInfos() []string {
 	return nil
 }
 
+type StepSignalRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StepId        uint64                 `protobuf:"varint,1,opt,name=step_id,json=stepId,proto3" json:"step_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StepSignalRequest) Reset() {
+	*x = StepSignalRequest{}
+	mi := &file_battlesnake_env_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StepSignalRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StepSignalRequest) ProtoMessage() {}
+
+func (x *StepSignalRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_battlesnake_env_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StepSignalRequest.ProtoReflect.Descriptor instead.
+func (*StepSignalRequest) Descriptor() ([]byte, []int) {
+	return file_battlesnake_env_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *StepSignalRequest) GetStepId() uint64 {
+	if x != nil {
+		return x.StepId
+	}
+	return 0
+}
+
+type StepSignalResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StepId        uint64                 `protobuf:"varint,1,opt,name=step_id,json=stepId,proto3" json:"step_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StepSignalResponse) Reset() {
+	*x = StepSignalResponse{}
+	mi := &file_battlesnake_env_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StepSignalResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StepSignalResponse) ProtoMessage() {}
+
+func (x *StepSignalResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_battlesnake_env_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StepSignalResponse.ProtoReflect.Descriptor instead.
+func (*StepSignalResponse) Descriptor() ([]byte, []int) {
+	return file_battlesnake_env_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *StepSignalResponse) GetStepId() uint64 {
+	if x != nil {
+		return x.StepId
+	}
+	return 0
+}
+
 var File_battlesnake_env_proto protoreflect.FileDescriptor
 
 const file_battlesnake_env_proto_rawDesc = "" +
@@ -430,7 +526,7 @@ const file_battlesnake_env_proto_rawDesc = "" +
 	"\fboard_height\x18\x03 \x01(\x05R\vboardHeight\x12#\n" +
 	"\ropponent_type\x18\x04 \x01(\tR\fopponentType\x12\x1b\n" +
 	"\tmax_turns\x18\x05 \x01(\x05R\bmaxTurns\x12\"\n" +
-	"\rbrs_budget_ms\x18\x06 \x01(\x05R\vbrsBudgetMs\"\xbb\x01\n" +
+	"\rbrs_budget_ms\x18\x06 \x01(\x05R\vbrsBudgetMs\"\xd6\x01\n" +
 	"\x0eConfigResponse\x12\x19\n" +
 	"\bnum_envs\x18\x01 \x01(\x05R\anumEnvs\x12)\n" +
 	"\x10spatial_channels\x18\x02 \x01(\x05R\x0fspatialChannels\x12!\n" +
@@ -438,7 +534,8 @@ const file_battlesnake_env_proto_rawDesc = "" +
 	"\vnum_scalars\x18\x04 \x01(\x05R\n" +
 	"numScalars\x12\x1f\n" +
 	"\vnum_actions\x18\x05 \x01(\x05R\n" +
-	"numActions\"'\n" +
+	"numActions\x12\x19\n" +
+	"\bshm_path\x18\x06 \x01(\tR\ashmPath\"'\n" +
 	"\fResetRequest\x12\x17\n" +
 	"\aenv_ids\x18\x01 \x03(\x05R\x06envIds\"\x8c\x01\n" +
 	"\fObservations\x12\x1c\n" +
@@ -454,11 +551,17 @@ const file_battlesnake_env_proto_rawDesc = "" +
 	"\fobservations\x18\x01 \x01(\v2\x1d.battlesnake_env.ObservationsR\fobservations\x12\x1c\n" +
 	"\arewards\x18\x02 \x03(\x02B\x02\x10\x01R\arewards\x12\x18\n" +
 	"\x05dones\x18\x03 \x03(\bB\x02\x10\x01R\x05dones\x12\x14\n" +
-	"\x05infos\x18\x04 \x03(\tR\x05infos2\xea\x01\n" +
+	"\x05infos\x18\x04 \x03(\tR\x05infos\",\n" +
+	"\x11StepSignalRequest\x12\x17\n" +
+	"\astep_id\x18\x01 \x01(\x04R\x06stepId\"-\n" +
+	"\x12StepSignalResponse\x12\x17\n" +
+	"\astep_id\x18\x01 \x01(\x04R\x06stepId2\xc1\x02\n" +
 	"\x0eBattlesnakeEnv\x12L\n" +
 	"\tConfigure\x12\x1e.battlesnake_env.ConfigRequest\x1a\x1f.battlesnake_env.ConfigResponse\x12E\n" +
 	"\x05Reset\x12\x1d.battlesnake_env.ResetRequest\x1a\x1d.battlesnake_env.Observations\x12C\n" +
-	"\x04Step\x12\x1c.battlesnake_env.StepRequest\x1a\x1d.battlesnake_env.StepResponseB*Z(github.com/bodist/haruko/cmd/rlenv/envpbb\x06proto3"
+	"\x04Step\x12\x1c.battlesnake_env.StepRequest\x1a\x1d.battlesnake_env.StepResponse\x12U\n" +
+	"\n" +
+	"StepSignal\x12\".battlesnake_env.StepSignalRequest\x1a#.battlesnake_env.StepSignalResponseB*Z(github.com/bodist/haruko/cmd/rlenv/envpbb\x06proto3"
 
 var (
 	file_battlesnake_env_proto_rawDescOnce sync.Once
@@ -472,25 +575,29 @@ func file_battlesnake_env_proto_rawDescGZIP() []byte {
 	return file_battlesnake_env_proto_rawDescData
 }
 
-var file_battlesnake_env_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_battlesnake_env_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_battlesnake_env_proto_goTypes = []any{
-	(*ConfigRequest)(nil),  // 0: battlesnake_env.ConfigRequest
-	(*ConfigResponse)(nil), // 1: battlesnake_env.ConfigResponse
-	(*ResetRequest)(nil),   // 2: battlesnake_env.ResetRequest
-	(*Observations)(nil),   // 3: battlesnake_env.Observations
-	(*StepRequest)(nil),    // 4: battlesnake_env.StepRequest
-	(*StepResponse)(nil),   // 5: battlesnake_env.StepResponse
+	(*ConfigRequest)(nil),      // 0: battlesnake_env.ConfigRequest
+	(*ConfigResponse)(nil),     // 1: battlesnake_env.ConfigResponse
+	(*ResetRequest)(nil),       // 2: battlesnake_env.ResetRequest
+	(*Observations)(nil),       // 3: battlesnake_env.Observations
+	(*StepRequest)(nil),        // 4: battlesnake_env.StepRequest
+	(*StepResponse)(nil),       // 5: battlesnake_env.StepResponse
+	(*StepSignalRequest)(nil),  // 6: battlesnake_env.StepSignalRequest
+	(*StepSignalResponse)(nil), // 7: battlesnake_env.StepSignalResponse
 }
 var file_battlesnake_env_proto_depIdxs = []int32{
 	3, // 0: battlesnake_env.StepResponse.observations:type_name -> battlesnake_env.Observations
 	0, // 1: battlesnake_env.BattlesnakeEnv.Configure:input_type -> battlesnake_env.ConfigRequest
 	2, // 2: battlesnake_env.BattlesnakeEnv.Reset:input_type -> battlesnake_env.ResetRequest
 	4, // 3: battlesnake_env.BattlesnakeEnv.Step:input_type -> battlesnake_env.StepRequest
-	1, // 4: battlesnake_env.BattlesnakeEnv.Configure:output_type -> battlesnake_env.ConfigResponse
-	3, // 5: battlesnake_env.BattlesnakeEnv.Reset:output_type -> battlesnake_env.Observations
-	5, // 6: battlesnake_env.BattlesnakeEnv.Step:output_type -> battlesnake_env.StepResponse
-	4, // [4:7] is the sub-list for method output_type
-	1, // [1:4] is the sub-list for method input_type
+	6, // 4: battlesnake_env.BattlesnakeEnv.StepSignal:input_type -> battlesnake_env.StepSignalRequest
+	1, // 5: battlesnake_env.BattlesnakeEnv.Configure:output_type -> battlesnake_env.ConfigResponse
+	3, // 6: battlesnake_env.BattlesnakeEnv.Reset:output_type -> battlesnake_env.Observations
+	5, // 7: battlesnake_env.BattlesnakeEnv.Step:output_type -> battlesnake_env.StepResponse
+	7, // 8: battlesnake_env.BattlesnakeEnv.StepSignal:output_type -> battlesnake_env.StepSignalResponse
+	5, // [5:9] is the sub-list for method output_type
+	1, // [1:5] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -507,7 +614,7 @@ func file_battlesnake_env_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_battlesnake_env_proto_rawDesc), len(file_battlesnake_env_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

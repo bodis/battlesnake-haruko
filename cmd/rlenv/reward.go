@@ -14,42 +14,18 @@ func computeReward(g *logic.GameSim, prevG *logic.GameSim, myIdx, oppIdx int, ha
 }
 
 // computeRewardSolo computes reward for solo (no opponent) mode.
-// - Death: -10.0
-// - Survive 500 turns: +10.0
+// - Death: -1.0
 // - Per turn alive: +0.01
-// - Eat food: +0.5
-// - Health < 20: -0.1 * (20 - health) / 20
+// - Health < 30: -0.005 * (30 - health) (gradient toward food)
 func computeRewardSolo(g *logic.GameSim, prevG *logic.GameSim, myIdx int) float32 {
 	me := &g.Snakes[myIdx]
-
-	// Death.
 	if !me.IsAlive() {
-		return -10.0
+		return -1.0
 	}
-
-	var reward float32
-
-	// Survival bonus (checked by env_manager via maxTurns).
-	if g.Turn >= 500 {
-		reward += 10.0
+	reward := float32(0.01)
+	if me.Health < 30 {
+		reward -= 0.005 * float32(30-me.Health)
 	}
-
-	// Per turn alive.
-	reward += 0.01
-
-	// Eat food: detect by length increase.
-	if prevG != nil {
-		prevMe := &prevG.Snakes[myIdx]
-		if me.Length > prevMe.Length {
-			reward += 0.5
-		}
-	}
-
-	// Low health penalty.
-	if me.Health < 20 {
-		reward -= 0.1 * float32(20-me.Health) / 20.0
-	}
-
 	return reward
 }
 

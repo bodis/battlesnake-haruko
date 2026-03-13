@@ -13,6 +13,7 @@ import (
 func main() {
 	port := flag.Int("port", 50051, "gRPC server port")
 	numEnvs := flag.Int("num-envs", 128, "default number of parallel environments")
+	shmPath := flag.String("shm-path", "/tmp/haruko-rl-shm", "shared memory file path")
 	flag.Parse()
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
@@ -21,7 +22,7 @@ func main() {
 	}
 
 	srv := grpc.NewServer()
-	envServer := NewEnvServer(*numEnvs)
+	envServer := NewEnvServer(*numEnvs, *shmPath)
 	pb.RegisterBattlesnakeEnvServer(srv, envServer)
 
 	log.Printf("rlenv gRPC server starting on :%d (default envs=%d)", *port, *numEnvs)
@@ -35,11 +36,14 @@ type EnvServer struct {
 	pb.UnimplementedBattlesnakeEnvServer
 	mgr            *EnvManager
 	defaultNumEnvs int
+	shmPath        string
+	shm            *shmBuffer
 }
 
 // NewEnvServer creates a new EnvServer with the given default environment count.
-func NewEnvServer(defaultNumEnvs int) *EnvServer {
+func NewEnvServer(defaultNumEnvs int, shmPath string) *EnvServer {
 	return &EnvServer{
 		defaultNumEnvs: defaultNumEnvs,
+		shmPath:        shmPath,
 	}
 }
