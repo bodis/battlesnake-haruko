@@ -19,6 +19,7 @@ const (
 	oppNone   opponentType = 0
 	oppRandom opponentType = 1
 	oppBRS    opponentType = 2
+	oppSelf   opponentType = 3
 )
 
 // singleEnv holds the state for one parallel environment.
@@ -77,6 +78,9 @@ func NewEnvManager(cfg *pb.ConfigRequest) *EnvManager {
 	case "brs":
 		ot = oppBRS
 		policy = &BRSPolicy{Budget: brsBudget}
+	case "self":
+		ot = oppSelf
+		policy = nil
 	default:
 		ot = oppNone
 		policy = nil
@@ -347,7 +351,7 @@ func (s *EnvServer) Step(ctx context.Context, req *pb.StepRequest) (*pb.StepResp
 			maybeSpawnFood(e.game, e.rng)
 
 			// Compute reward.
-			reward := computeReward(e.game, e.prevGame, e.myIdx, e.oppIdx, s.mgr.hasOpponent())
+			reward := computeReward(e.game, e.prevGame, e.myIdx, e.oppIdx, s.mgr.hasOpponent(), s.mgr.oppType)
 			rewards[idx] = reward
 
 			// Check if done.
@@ -443,11 +447,25 @@ func (s *EnvServer) writeObsToSHM(envIDs []int32) {
 		e.mu.Lock()
 		spatial, scalars := computeObservation(e.game, e.myIdx)
 		mask := computeActionMask(e.game, e.myIdx)
+		var oppSpatial []float32
+		var oppScalars []float32
+		var oppMask [numActions]bool
+		selfPlay := s.mgr.oppType == oppSelf && e.oppIdx >= 0
+		if selfPlay {
+			oppSpatial, oppScalars = computeObservation(e.game, e.oppIdx)
+			oppMask = computeActionMask(e.game, e.oppIdx)
+		}
 		e.mu.Unlock()
 
 		s.shm.writeSpatial(idx, spatial)
 		s.shm.writeScalars(idx, scalars)
 		s.shm.writeMask(idx, mask)
+
+		if selfPlay {
+			s.shm.writeOppSpatial(idx, oppSpatial)
+			s.shm.writeOppScalars(idx, oppScalars)
+			s.shm.writeOppMask(idx, oppMask)
+		}
 	}
 }
 
@@ -486,10 +504,17 @@ func (s *EnvServer) StepSignal(ctx context.Context, req *pb.StepSignalRequest) (
 			ms.Dir[e.myIdx] = action
 			ms.Has[e.myIdx] = true
 
-			if e.oppIdx >= 0 && e.game.Snakes[e.oppIdx].IsAlive() && s.mgr.oppPolicy != nil {
-				oppDir := s.mgr.oppPolicy.ChooseMove(e.game, e.oppIdx)
-				ms.Dir[e.oppIdx] = oppDir
-				ms.Has[e.oppIdx] = true
+			if e.oppIdx >= 0 && e.game.Snakes[e.oppIdx].IsAlive() {
+				if s.mgr.oppType == oppSelf {
+					oppAction := logic.Direction(s.shm.readOppAction(idx))
+					oppAction = correctAction(e.game, e.oppIdx, oppAction)
+					ms.Dir[e.oppIdx] = oppAction
+					ms.Has[e.oppIdx] = true
+				} else if s.mgr.oppPolicy != nil {
+					oppDir := s.mgr.oppPolicy.ChooseMove(e.game, e.oppIdx)
+					ms.Dir[e.oppIdx] = oppDir
+					ms.Has[e.oppIdx] = true
+				}
 			}
 
 			e.game.Step(ms)
@@ -497,7 +522,7 @@ func (s *EnvServer) StepSignal(ctx context.Context, req *pb.StepSignalRequest) (
 
 			maybeSpawnFood(e.game, e.rng)
 
-			reward := computeReward(e.game, e.prevGame, e.myIdx, e.oppIdx, s.mgr.hasOpponent())
+			reward := computeReward(e.game, e.prevGame, e.myIdx, e.oppIdx, s.mgr.hasOpponent(), s.mgr.oppType)
 			s.shm.writeReward(idx, reward)
 
 			agentDead := !e.game.Snakes[e.myIdx].IsAlive()

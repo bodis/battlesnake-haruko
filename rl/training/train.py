@@ -18,6 +18,8 @@ from stable_baselines3.common.callbacks import (
 # Add rl/ to path for imports.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from stable_baselines3.common.vec_env import VecEnv
+
 from env.battlesnake_env import BattlesnakeVecEnv
 from model.features import BattlesnakeFeatureExtractor
 
@@ -86,6 +88,56 @@ class BestModelCallback(BaseCallback):
         return True
 
 
+class SelfPlayVecEnv(VecEnv):
+    """Wraps BattlesnakeVecEnv to inject frozen model inference for the opponent.
+
+    The frozen model reads opponent observations from mmap, predicts actions,
+    and writes them back to mmap. The Go server reads these actions for the
+    opponent snake during StepSignal.
+    """
+
+    def __init__(self, env: BattlesnakeVecEnv, frozen_model: PPO):
+        super().__init__(env.num_envs, env.observation_space, env.action_space)
+        self._env = env
+        self._frozen = frozen_model
+
+    def reset(self) -> dict:
+        obs = self._env.reset()
+        self._run_frozen()
+        return obs
+
+    def step_async(self, actions: np.ndarray) -> None:
+        self._env.step_async(actions)
+
+    def step_wait(self) -> tuple:
+        result = self._env.step_wait()
+        self._run_frozen()
+        return result
+
+    def _run_frozen(self) -> None:
+        opp_obs = self._env.read_opp_obs()
+        opp_actions, _ = self._frozen.predict(opp_obs, deterministic=False)
+        self._env.write_opp_actions(opp_actions)
+
+    def close(self) -> None:
+        self._env.close()
+
+    def env_is_wrapped(self, wrapper_class, indices=None):
+        return self._env.env_is_wrapped(wrapper_class, indices)
+
+    def env_method(self, method_name, *method_args, indices=None, **method_kwargs):
+        return self._env.env_method(method_name, *method_args, indices=indices, **method_kwargs)
+
+    def get_attr(self, attr_name, indices=None):
+        return self._env.get_attr(attr_name, indices)
+
+    def set_attr(self, attr_name, value, indices=None):
+        self._env.set_attr(attr_name, value, indices)
+
+    def seed(self, seed=None):
+        self._env.seed(seed)
+
+
 def make_env(args) -> BattlesnakeVecEnv:
     """Create the vectorized environment connected to the Go server."""
     return BattlesnakeVecEnv(
@@ -147,7 +199,7 @@ def main():
     parser.add_argument("--num-envs", type=int, default=64)
     parser.add_argument("--board-width", type=int, default=11)
     parser.add_argument("--board-height", type=int, default=11)
-    parser.add_argument("--opponent", default="none", choices=["none", "random", "brs"])
+    parser.add_argument("--opponent", default="none", choices=["none", "random", "brs", "self"])
     parser.add_argument("--max-turns", type=int, default=500)
     parser.add_argument("--brs-budget-ms", type=int, default=50)
     # Training.
@@ -167,6 +219,8 @@ def main():
     parser.add_argument("--device", default="auto")
     # Resume.
     parser.add_argument("--resume", default=None, help="Path to checkpoint .zip to resume from")
+    # Self-play.
+    parser.add_argument("--self-play-model", default=None, help="Path to frozen model .zip for self-play opponent")
     # Run name.
     parser.add_argument("--name", default=None, help="Run name for TensorBoard and checkpoints")
 
@@ -187,6 +241,15 @@ def main():
     print()
 
     env = make_env(args)
+
+    if args.self_play_model:
+        print(f"Loading frozen opponent: {args.self_play_model}")
+        frozen = PPO.load(args.self_play_model, device=args.device)
+        frozen.policy.eval()
+        for p in frozen.policy.parameters():
+            p.requires_grad = False
+        env = SelfPlayVecEnv(env, frozen)
+
     model = load_or_create_model(env, args)
 
     callbacks = CallbackList(

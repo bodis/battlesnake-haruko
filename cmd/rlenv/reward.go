@@ -6,11 +6,30 @@ import (
 
 // computeReward calculates the reward for the current step.
 // prevG is the game state before the step, g is the state after.
-func computeReward(g *logic.GameSim, prevG *logic.GameSim, myIdx, oppIdx int, hasOpponent bool) float32 {
+func computeReward(g *logic.GameSim, prevG *logic.GameSim, myIdx, oppIdx int, hasOpponent bool, oppType opponentType) float32 {
 	if !hasOpponent {
 		return computeRewardSolo(g, prevG, myIdx)
 	}
+	if oppType == oppSelf {
+		return computeRewardSelfPlay(g, prevG, myIdx, oppIdx)
+	}
 	return computeRewardVsOpponent(g, prevG, myIdx, oppIdx)
+}
+
+// computeRewardSelfPlay computes reward for self-play mode.
+// Sparse rewards: death -1, kill +1, alive +0.01.
+func computeRewardSelfPlay(g *logic.GameSim, prevG *logic.GameSim, myIdx, oppIdx int) float32 {
+	me := &g.Snakes[myIdx]
+	if !me.IsAlive() {
+		return -1.0
+	}
+	var reward float32 = 0.01
+	if oppIdx >= 0 && oppIdx < len(g.Snakes) && !g.Snakes[oppIdx].IsAlive() {
+		if prevG != nil && prevG.Snakes[oppIdx].IsAlive() {
+			reward += 1.0
+		}
+	}
+	return reward
 }
 
 // computeRewardSolo computes reward for solo (no opponent) mode.

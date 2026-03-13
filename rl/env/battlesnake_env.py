@@ -89,6 +89,10 @@ class BattlesnakeVecEnv(VecEnv):
         self._shm_rewards = None
         self._shm_dones = None
         self._shm_actions = None
+        self._shm_opp_spatial = None
+        self._shm_opp_scalars = None
+        self._shm_opp_masks = None
+        self._shm_opp_actions = None
         self._use_shm = False
 
         if cfg_resp.shm_path:
@@ -101,9 +105,10 @@ class BattlesnakeVecEnv(VecEnv):
         self._shm_mm = mmap.mmap(self._shm_fd, file_size)
 
         # Read header offsets (stored by Go server).
-        header = self._shm_mm[:64]
+        header = self._shm_mm[:80]
         magic = header[0:4]
         assert magic == b"HSHM", f"Bad shm magic: {magic}"
+        version = struct.unpack_from("<I", header, 4)[0]
 
         spatial_off = struct.unpack_from("<I", header, 24)[0]
         scalars_off = struct.unpack_from("<I", header, 28)[0]
@@ -133,6 +138,26 @@ class BattlesnakeVecEnv(VecEnv):
         self._shm_actions = np.frombuffer(
             self._shm_mm, dtype=np.int32, offset=actions_off, count=n
         )
+
+        # Opponent arrays (version >= 2).
+        if version >= 2:
+            opp_spatial_off = struct.unpack_from("<I", header, 56)[0]
+            opp_scalars_off = struct.unpack_from("<I", header, 60)[0]
+            opp_masks_off = struct.unpack_from("<I", header, 64)[0]
+            opp_actions_off = struct.unpack_from("<I", header, 68)[0]
+
+            self._shm_opp_spatial = np.frombuffer(
+                self._shm_mm, dtype=np.float32, offset=opp_spatial_off, count=spatial_count
+            ).reshape(n, ch, h, w)
+            self._shm_opp_scalars = np.frombuffer(
+                self._shm_mm, dtype=np.float32, offset=opp_scalars_off, count=n * self._num_scalars
+            ).reshape(n, self._num_scalars)
+            self._shm_opp_masks = np.frombuffer(
+                self._shm_mm, dtype=np.uint8, offset=opp_masks_off, count=n * 4
+            ).reshape(n, 4)
+            self._shm_opp_actions = np.frombuffer(
+                self._shm_mm, dtype=np.int32, offset=opp_actions_off, count=n
+            )
 
         self._use_shm = True
 
@@ -217,6 +242,18 @@ class BattlesnakeVecEnv(VecEnv):
 
         return obs, rewards, dones, infos
 
+    def read_opp_obs(self) -> dict:
+        """Read opponent observations from shared memory."""
+        return {
+            "spatial": self._shm_opp_spatial.copy(),
+            "scalars": self._shm_opp_scalars.copy(),
+            "action_mask": self._shm_opp_masks.astype(np.int8).copy(),
+        }
+
+    def write_opp_actions(self, actions: np.ndarray) -> None:
+        """Write opponent actions into shared memory."""
+        self._shm_opp_actions[:] = actions.astype(np.int32)
+
     def close(self) -> None:
         # Release numpy views before closing mmap.
         self._shm_spatial = None
@@ -225,6 +262,10 @@ class BattlesnakeVecEnv(VecEnv):
         self._shm_rewards = None
         self._shm_dones = None
         self._shm_actions = None
+        self._shm_opp_spatial = None
+        self._shm_opp_scalars = None
+        self._shm_opp_masks = None
+        self._shm_opp_actions = None
         if self._shm_mm is not None:
             self._shm_mm.close()
             self._shm_mm = None

@@ -11,8 +11,8 @@ import (
 
 const (
 	shmMagic      = "HSHM"
-	shmVersion    = 1
-	shmHeaderSize = 64
+	shmVersion    = 2
+	shmHeaderSize = 80
 )
 
 // shmLayout describes the memory layout of the shared buffer.
@@ -22,13 +22,17 @@ type shmLayout struct {
 	spatialSize     int
 	numScalars      int
 
-	spatialOffset int
-	scalarsOffset int
-	masksOffset   int
-	rewardsOffset int
-	donesOffset   int
-	actionsOffset int
-	totalSize     int
+	spatialOffset    int
+	scalarsOffset    int
+	masksOffset      int
+	rewardsOffset    int
+	donesOffset      int
+	actionsOffset    int
+	oppSpatialOffset int
+	oppScalarsOffset int
+	oppMasksOffset   int
+	oppActionsOffset int
+	totalSize        int
 }
 
 func newSHMLayout(numEnvs int) shmLayout {
@@ -59,18 +63,36 @@ func newSHMLayout(numEnvs int) shmLayout {
 	actionsOff := off
 	off += n * 4 // int32
 
+	// Opponent arrays (for self-play: Python runs frozen model inference).
+	// Pad to 4-byte alignment.
+	off = (off + 3) &^ 3
+	oppSpatialOff := off
+	off += spatialBytes
+	oppScalarsOff := off
+	off += scalarsBytes
+	oppMasksOff := off
+	off += masksBytes
+	// Pad to 4-byte alignment for opp actions.
+	off = (off + 3) &^ 3
+	oppActionsOff := off
+	off += n * 4 // int32
+
 	return shmLayout{
-		numEnvs:         n,
-		spatialChannels: ch,
-		spatialSize:     sz,
-		numScalars:      sc,
-		spatialOffset:   spatialOff,
-		scalarsOffset:   scalarsOff,
-		masksOffset:     masksOff,
-		rewardsOffset:   rewardsOff,
-		donesOffset:     donesOff,
-		actionsOffset:   actionsOff,
-		totalSize:       off,
+		numEnvs:          n,
+		spatialChannels:  ch,
+		spatialSize:      sz,
+		numScalars:       sc,
+		spatialOffset:    spatialOff,
+		scalarsOffset:    scalarsOff,
+		masksOffset:      masksOff,
+		rewardsOffset:    rewardsOff,
+		donesOffset:      donesOff,
+		actionsOffset:    actionsOff,
+		oppSpatialOffset: oppSpatialOff,
+		oppScalarsOffset: oppScalarsOff,
+		oppMasksOffset:   oppMasksOff,
+		oppActionsOffset: oppActionsOff,
+		totalSize:        off,
 	}
 }
 
@@ -125,7 +147,12 @@ func createSHM(path string, numEnvs int) (*shmBuffer, error) {
 	binary.LittleEndian.PutUint32(buf.data[40:44], uint32(layout.donesOffset))
 	binary.LittleEndian.PutUint32(buf.data[44:48], uint32(layout.actionsOffset))
 	// step_counter at 48-55 starts at 0 (already zeroed).
-	// reserved 56-63 already zeroed.
+	// Opponent offsets at 56-71.
+	binary.LittleEndian.PutUint32(buf.data[56:60], uint32(layout.oppSpatialOffset))
+	binary.LittleEndian.PutUint32(buf.data[60:64], uint32(layout.oppScalarsOffset))
+	binary.LittleEndian.PutUint32(buf.data[64:68], uint32(layout.oppMasksOffset))
+	binary.LittleEndian.PutUint32(buf.data[68:72], uint32(layout.oppActionsOffset))
+	// reserved 72-79 already zeroed.
 
 	return buf, nil
 }
@@ -189,5 +216,38 @@ func (b *shmBuffer) writeDone(envIdx int, done bool) {
 // readAction reads the action for one env from mmap.
 func (b *shmBuffer) readAction(envIdx int) int32 {
 	off := b.layout.actionsOffset + envIdx*4
+	return int32(binary.LittleEndian.Uint32(b.data[off : off+4]))
+}
+
+// writeOppSpatial copies opponent spatial observation for one env into mmap.
+func (b *shmBuffer) writeOppSpatial(envIdx int, spatial []float32) {
+	floatsPerEnv := b.layout.spatialChannels * b.layout.spatialSize * b.layout.spatialSize
+	off := b.layout.oppSpatialOffset + envIdx*floatsPerEnv*4
+	dst := unsafe.Slice((*float32)(unsafe.Pointer(&b.data[off])), floatsPerEnv)
+	copy(dst, spatial)
+}
+
+// writeOppScalars copies opponent scalar observation for one env into mmap.
+func (b *shmBuffer) writeOppScalars(envIdx int, scalars []float32) {
+	off := b.layout.oppScalarsOffset + envIdx*b.layout.numScalars*4
+	dst := unsafe.Slice((*float32)(unsafe.Pointer(&b.data[off])), b.layout.numScalars)
+	copy(dst, scalars)
+}
+
+// writeOppMask writes the opponent action mask for one env into mmap.
+func (b *shmBuffer) writeOppMask(envIdx int, mask [numActions]bool) {
+	off := b.layout.oppMasksOffset + envIdx*numActions
+	for i := 0; i < numActions; i++ {
+		if mask[i] {
+			b.data[off+i] = 1
+		} else {
+			b.data[off+i] = 0
+		}
+	}
+}
+
+// readOppAction reads the opponent action for one env from mmap.
+func (b *shmBuffer) readOppAction(envIdx int) int32 {
+	off := b.layout.oppActionsOffset + envIdx*4
 	return int32(binary.LittleEndian.Uint32(b.data[off : off+4]))
 }
