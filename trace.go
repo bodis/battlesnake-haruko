@@ -70,6 +70,15 @@ type traceRecord struct {
 	MyEscapeRoutes  int `json:"my_escape_routes,omitempty"`
 	OppEscapeRoutes int `json:"opp_escape_routes,omitempty"`
 
+	// Diagnostic: tail reachability and loopability
+	MyTailReachable  bool `json:"my_tail_reachable,omitempty"`
+	MyTailBFSDist    int  `json:"my_tail_bfs_dist,omitempty"`
+	OppTailReachable bool `json:"opp_tail_reachable,omitempty"`
+	OppTailBFSDist   int  `json:"opp_tail_bfs_dist,omitempty"`
+	MyLoopable       bool `json:"my_loopable,omitempty"`
+	OppLoopable      bool `json:"opp_loopable,omitempty"`
+	TurnsToDeathEst  int  `json:"turns_to_death_est,omitempty"`
+
 	// Diagnostic: derived ratios
 	MyFunnelRatio    float64 `json:"my_funnel_ratio,omitempty"`    // near / territory (high = compact)
 	MyCorridorRatio  float64 `json:"my_corridor_ratio,omitempty"`  // corridor cells / territory
@@ -134,7 +143,8 @@ func traceTurn(gameID, snakeID string, state GameState, sim *logic.GameSim, move
 	}
 
 	bd := logic.EvaluateDetailed(sim, myIdx)
-	vr := logic.VoronoiTerritory(sim, myIdx, true)
+	var ownerBuf [logic.MaxBoardCells]int8
+	vr := logic.VoronoiTerritoryWithOwner(sim, myIdx, true, ownerBuf[:])
 
 	oppLen := 0
 	oppIdx := -1
@@ -152,6 +162,22 @@ func traceTurn(gameID, snakeID string, state GameState, sim *logic.GameSim, move
 	oppEscape := 0
 	if oppIdx >= 0 {
 		oppEscape = logic.EscapeReachability(sim, oppIdx, 6)
+	}
+
+	// Tail reachability and loopability.
+	myTailDist, myTailReachable := logic.BFSTailDist(sim, myIdx, ownerBuf[:], sim.Width, sim.Height)
+	myLoopable := myTailReachable && vr.MyTerritory >= sim.Snakes[myIdx].Length
+
+	oppTailDist, oppTailReachable := -1, false
+	oppLoopable := false
+	if oppIdx >= 0 {
+		oppTailDist, oppTailReachable = logic.BFSTailDist(sim, oppIdx, ownerBuf[:], sim.Width, sim.Height)
+		oppLoopable = oppTailReachable && vr.OppTerritory >= sim.Snakes[oppIdx].Length
+	}
+
+	turnsToDeathEst := 0
+	if !myLoopable {
+		turnsToDeathEst = myEscape
 	}
 
 	// Derived ratios.
@@ -218,6 +244,15 @@ func traceTurn(gameID, snakeID string, state GameState, sim *logic.GameSim, move
 		OppFunnelRatio:   oppFunnelRatio,
 		OppCorridorRatio: oppCorridorRatio,
 		OppEscapeRatio:   oppEscapeRatio,
+
+		// Tail reachability
+		MyTailReachable:  myTailReachable,
+		MyTailBFSDist:    myTailDist,
+		OppTailReachable: oppTailReachable,
+		OppTailBFSDist:   oppTailDist,
+		MyLoopable:       myLoopable,
+		OppLoopable:      oppLoopable,
+		TurnsToDeathEst:  turnsToDeathEst,
 	}
 	tg.records = append(tg.records, rec)
 }

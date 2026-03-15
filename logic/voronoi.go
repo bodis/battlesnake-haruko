@@ -381,14 +381,33 @@ func EscapeReachabilityPooled(g *GameSim, snakeIdx, maxDist int) int {
 	return count
 }
 
+// MaxBoardCells is the maximum number of cells on any supported board (19x19).
+const MaxBoardCells = maxBoardCells
+
 // VoronoiTerritory performs a multi-source BFS from all alive snake heads
 // and returns territory counts, food ownership, and partition status.
 // Cells reached by two snakes in the same BFS layer are unclaimed (ties).
 func VoronoiTerritory(g *GameSim, myIdx int, skipBottleneck bool) VoronoiResult {
+	vr, ws := voronoiTerritoryImpl(g, myIdx, skipBottleneck)
+	voronoiPool.Put(ws)
+	return vr
+}
+
+// VoronoiTerritoryWithOwner is like VoronoiTerritory but also copies the
+// per-cell owner array into ownerOut. Owner tags: 0=unclaimed, -1=tied,
+// positive = snakeIdx+1. Caller provides the buffer (e.g. stack [MaxBoardCells]int8).
+func VoronoiTerritoryWithOwner(g *GameSim, myIdx int, skipBottleneck bool, ownerOut []int8) VoronoiResult {
+	vr, ws := voronoiTerritoryImpl(g, myIdx, skipBottleneck)
+	copy(ownerOut, ws.owner[:g.Width*g.Height])
+	voronoiPool.Put(ws)
+	return vr
+}
+
+// voronoiTerritoryImpl is the core Voronoi BFS. Caller must put ws back into voronoiPool.
+func voronoiTerritoryImpl(g *GameSim, myIdx int, skipBottleneck bool) (VoronoiResult, *voronoiWorkspace) {
 	size := g.Width * g.Height
 
 	ws := voronoiPool.Get().(*voronoiWorkspace)
-	defer voronoiPool.Put(ws)
 
 	// Clear workspace arrays for the board size.
 	for i := 0; i < size; i++ {
@@ -574,5 +593,91 @@ func VoronoiTerritory(g *GameSim, myIdx int, skipBottleneck bool) VoronoiResult 
 	// Partition: our wavefront never met any opponent.
 	result.IsPartitioned = !myHasFrontier && aliveCount >= 2
 
-	return result
+	return result, ws
+}
+
+// BFSTailDist computes the BFS distance from a snake's head to its tail,
+// traversing only cells owned by the snake (in the Voronoi owner array) or
+// the snake's own body segments. Zero-alloc (stack arrays).
+// Returns (dist, true) if tail is reachable, (-1, false) otherwise.
+func BFSTailDist(g *GameSim, snakeIdx int, owner []int8, w, h int) (int, bool) {
+	s := &g.Snakes[snakeIdx]
+	if !s.IsAlive() {
+		return -1, false
+	}
+	head := s.Head()
+	tail := s.Tail()
+
+	// Length-1 snake: head == tail.
+	if head == tail {
+		return 0, true
+	}
+
+	myTag := int8(snakeIdx + 1)
+	size := w * h
+
+	// Build body cell set.
+	var isBody [maxBoardCells]bool
+	for _, c := range s.Body {
+		if c.X >= 0 && c.X < w && c.Y >= 0 && c.Y < h {
+			isBody[c.Y*w+c.X] = true
+		}
+	}
+
+	// BFS from head.
+	var visited [maxBoardCells]bool
+	var queue [maxBoardCells]int16
+	headIdx := int16(head.Y*w + head.X)
+	tailIdx := int16(tail.Y*w + tail.X)
+
+	visited[headIdx] = true
+	queue[0] = headIdx
+	qHead, qTail := 0, 1
+	dist := 0
+
+	for qHead < qTail {
+		layerEnd := qTail
+		dist++
+		for qHead < layerEnd {
+			ci := queue[qHead]
+			qHead++
+			cx := int(ci) % w
+			cy := int(ci) / w
+
+			for d := 0; d < 4; d++ {
+				var nx, ny int
+				switch d {
+				case 0:
+					nx, ny = cx, cy+1
+				case 1:
+					nx, ny = cx, cy-1
+				case 2:
+					nx, ny = cx-1, cy
+				case 3:
+					nx, ny = cx+1, cy
+				}
+				if nx < 0 || nx >= w || ny < 0 || ny >= h {
+					continue
+				}
+				ni := int16(ny*w + nx)
+				if visited[ni] {
+					continue
+				}
+				if ni == tailIdx {
+					return dist, true
+				}
+				if int(ni) >= size {
+					continue
+				}
+				if owner[ni] != myTag && !isBody[ni] {
+					continue
+				}
+				visited[ni] = true
+				queue[qTail] = ni
+				qTail++
+			}
+		}
+	}
+
+	return -1, false
 }

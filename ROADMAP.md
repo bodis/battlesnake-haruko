@@ -10,10 +10,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Completed** | Iterations 1-20, 23-28, 30-34 (see below + ROADMAP_FINISHED.md) |
-| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%), Iter 28 partial (tail-aware BRS pruning: 43%), Iter 29 (hybrid BRS+MCTS: 2–46%), Iter 33 (escape/territory eval signals: 37–54%), Iter 34 (bottleneck routing: 40-57%, depth regression) |
+| **Completed** | Iterations 1-20, 23-28, 30-35 (see below + ROADMAP_FINISHED.md) |
+| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%), Iter 28 partial (tail-aware BRS pruning: 43%), Iter 29 (hybrid BRS+MCTS: 2–46%), Iter 33 (escape/territory eval signals: 37–54%), Iter 34 (bottleneck routing: 40-57%, depth regression), Iter 35 (tail reachability/loopability: signals too late, 1-turn death collapse) |
 | **Current** | v32 Territory connectivity: absolute MyConnectivity signal; 56-61% vs v31 (N=100); ~443-451 avg turns |
-| **Key insight** | Tarjan's AP is too expensive for hot-path eval (~2150ns/call). Any eval signal requiring Tarjan's causes depth regression that offsets the signal's benefit. Bottleneck detection must use cheaper proxies or operate outside the leaf evaluator. |
+| **Next** | Iter 36 (MC strategic rollout, diagnostic) → Iter 37 (survival mode) |
+| **Key insight** | Deaths are instantaneous 1-turn territory collapses beyond BRS horizon. Survival signals (tail reachability, loopability) are lagging indicators — they detect collapse after it happens, not before. Need longer-horizon methods (MC rollouts, territory projection) to predict collapse before it occurs. |
 
 ---
 
@@ -89,151 +90,113 @@
 
 ---
 
-## Iter 35 — Survival Mode: Longest Path in Confined Space
+## Iter 36 — Monte Carlo Strategic Rollout (Root-Level, Diagnostic)
 
 **Status:** PLANNED
 
-**Goal:** When partitioned (or very confined, e.g. escape routes < 20), switch from BRS minimax to a space-filling survival algorithm. In a partitioned board, the opponent can't reach us — the only question is who fills their space more efficiently. BRS is solving the wrong problem; a longest-path algorithm directly optimizes survival.
+**Goal:** Run cheap random game rollouts from the root position to detect which initial direction pairs lead to long-term death. Computed once per move alongside BRS. **Phase A is diagnostic only (trace + analyze). Phase B (wiring into BRS) only happens if Phase A shows clear value.**
 
-### Problem Analysis
+**Why:** BRS sees 12-14 plies (~6-7 full turns). Deaths are decided by territory flips 20-50+ turns ahead. Random rollouts are tactically stupid but can detect **structural** long-term problems — like "going left leads to a partition where I have 30 cells and die in 40 turns."
 
-When the board is partitioned, BRS simulates opponent moves that can't affect us. The eval compares territory that won't change. The engine effectively plays random moves in its partition. A space-filling algorithm would play optimally: follow the tail, avoid dead ends, maximize turns survived.
+### Design
 
-### Implementation Plan
+**Step 1: Generate initial direction pairs**
 
-**Step 1: Detect confined state**
+From current position, enumerate all valid 2-ply openings for us:
+- Ply 1: our valid moves (exclude wall collisions) → typically 3 directions
+- Ply 2: from each ply-1 result, our valid moves → typically 2-3 directions
+- Result: 6-9 direction pairs, minus wall overlaps → typically **6-8 valid pairs**
+- Opponent plays random valid move at each setup ply
 
-Trigger conditions (any of):
-- `vr.IsPartitioned == true` (board fully partitioned)
-- `EscapeReachabilityPooled(g, myIdx, 6) < 20` (very confined, even if not fully partitioned)
+**Step 2: Distribute rollouts evenly**
 
-**Step 2: Longest-path DFS**
+Given total rollout budget N (e.g., 1000):
+- Divide evenly across all valid direction pairs: ~125-167 rollouts each
+- Each rollout: from the 2-ply position, both sides play random valid moves (uniform from non-wall moves) until game over or max turns (200)
+- Random move selection: xorshift64 PRNG (reuse from MCTS infra in `logic/mcts.go`)
 
-When confined to N cells (N < ~30):
-- Run exhaustive DFS from head through reachable cells
-- Find the longest simple path (visits most cells without revisiting)
-- With N ≈ 20, this is trivially fast — DFS with backtracking on a grid graph of 20 nodes takes microseconds
-- Return the first move of the longest path
+**Step 3: Measure per direction pair**
 
-For larger confined areas (N = 30-60):
-- Exhaustive DFS becomes too slow
-- Use heuristic: prefer moves that maximize reachable cells after moving (greedy flood fill)
-- Enhanced tail-chasing: strongly prefer moves toward own tail (creates a loop, maximizes survival)
+For each `(dir1, dir2)` pair, record:
+- **Survival rate**: % of rollouts where we're alive at the end
+- **Avg turns survived**: mean game length across rollouts
+- **Territory at death**: average territory when we die
 
-**Step 3: Integration with BRS**
+**Step 4: Phase A — Log to trace (diagnostic only)**
 
-Options:
-- **Replace BRS entirely** when partitioned — survival algorithm chooses the move directly
-- **Use as eval** when partitioned — `score = survivable_turns` instead of territory-based eval
-- Replacement is cleaner: BRS opponent modeling is wasted computation when partitioned
+Log per-direction survival rates to trace. Analyze:
+- Does the worst direction pair correlate with BRS's chosen move being wrong?
+- How far ahead of actual death does MC detect the bad direction?
+- Does MC agree with BRS most of the time, or does it add genuinely new information?
+- When MC disagrees with BRS AND game is eventually lost, was MC right?
 
-**Step 4: Tail-aware space filling**
+**Step 5: Phase B — Wire as BRS signal (only if Phase A shows value)**
 
-Key insight: our tail moves as we move, opening cells behind us. So in a 20-cell partition, we can survive more than 20 turns if we follow our tail efficiently. The algorithm must account for tail movement when computing longest path.
+If data shows MC rollouts detect real danger:
+- Collapse pairs to per-direction survival: `dir1_survival = avg of all pairs starting with dir1`
+- Pass to BRS as root-level bias: penalize directions with low survival rate
+- Weight TBD based on Phase A data
 
-### Testing Plan
-
-- Focus on partition-specific metrics: compare survival turns in partitioned positions
-- `make compare PREV=snapshots/haruko-69c43bb N=100` — vs v32. Must beat >55%.
-- Trace analysis: verify the algorithm triggers in the right situations
-
-### Files to Modify
-
-| File | Change |
-|------|--------|
-| `logic/search.go` | Partition detection, survival mode bypass |
-| `logic/survival.go` | New file: longest-path DFS, space-filling heuristic |
-| `logic/eval.go` | Optional: survivable-turns eval for partition case |
-
----
-
-## Iter 36 — Tail Reachability: Loop Capability Signal
-
-**Status:** PLANNED
-
-**Goal:** Replace the crude Manhattan tail-chase signal with actual BFS tail reachability through owned territory. The key insight: a snake that cannot reach its own tail is on a death timer regardless of territory size. This property is completely invisible to the current eval — Voronoi measures territory quantity, connectivity measures territory width, but nothing measures whether the snake can sustain a survival loop.
-
-### Problem Analysis
-
-The current tail chase signal uses Manhattan distance from head to tail. This is misleading: if the path to the tail is blocked by body segments, Manhattan distance is 3 but actual path distance is ∞. The eval scores the position as "tail is nearby, good" when in reality the snake is trapped in a dead-end pocket and will die in N turns (where N = reachable cells).
-
-From the group analysis (Snake, Martha, Gabor):
-- Territory SIZE is well-captured by Voronoi. Territory LOOPABILITY is not captured at all.
-- A snake that can reach its tail can survive indefinitely (tail opens space as snake moves). A snake that can't is on a countdown.
-- This is asymmetric by nature: head and tail positions differ per snake, so BFS path distance is NOT a delta signal that cancels in self-play.
-- Actively cutting the opponent's loop is the offensive counterpart — but defensive loop maintenance creates natural offensive pressure via Voronoi squeeze.
-
-### Implementation Plan
-
-**Step 1: BFS tail reachability**
-
-After VoronoiTerritory runs (owner array available), BFS from head through cells owned by us:
-- Early termination when tail cell is found → O(reachable cells), not O(board)
-- Returns: reachable (bool) + BFS distance (int, ∞ when unreachable)
-- Can reuse Voronoi owner array — no extra allocation needed
-- Cost: ~100-300ns, much cheaper than Tarjan's (~2150ns)
-
-**Step 2: Replace Manhattan tail chase**
-
-Current: `tailDist := abs(head.X-tail.X) + abs(head.Y-tail.Y)`
-New: `tailDist := bfsTailDist(voronoiOwner, head, tail, width, height)`
-
-When tail is unreachable: `tailDist = ∞` → tail chase bonus = 0 + heavy cut-off penalty.
-
-**Step 3: Phase-gating**
-
-Only compute when `lateBlend > 0.3` — early game territories are open, loopability is trivially maintained. Late game is where loop breaks matter.
-
-**Step 4: Eval signals**
-
-Two signals from this data:
-- **Tail reachability penalty** (defensive): heavy penalty when own tail unreachable. Absolute signal, works in self-play.
-- **Opponent tail reachability reward** (offensive, optional): bonus when opponent's tail unreachable. Test separately — offensive signals have been marginal historically (Iter 33: 54% best case). Start with defensive only.
-
-**Connection to Iter 35:** Tail unreachability is a natural trigger for survival mode. If `tailReachable == false`, the snake is already in a confined pocket — switch to space-filling DFS. Iter 36 provides the detection; Iter 35 provides the response.
-
-### Why This Is Different from Previous Attempts
-
-| Attempt | What it detected | Why it failed |
-|---------|-----------------|---------------|
-| Iter 33 (escape routes) | Narrow corridors | Lagging indicator — corridors are normal in late game, both winners and losers have them |
-| Iter 34 (Tarjan's AP) | Territory bottlenecks | Too expensive for leaf eval (~2150ns → depth regression) |
-| **Iter 36 (tail reachability)** | Loop capability | Cheap BFS (~200ns), genuinely new info, position-asymmetric |
-
-### Testing Plan
-
-- `make compare PREV=snapshots/haruko-69c43bb N=100` — vs v32.
-- Phase 1: defensive signal only (own tail reachability)
-- Phase 2: if Phase 1 wins, add opponent tail reachability reward
-- Trace analysis: verify signal fires in the right situations (late-game confinement, not early game)
-
-### Files to Modify
+### Implementation
 
 | File | Change |
 |------|--------|
-| `logic/voronoi.go` | Add `bfsTailDist` using existing owner array from Voronoi workspace |
-| `logic/eval.go` | Replace Manhattan tail chase with BFS tail dist; add cut-off penalty |
+| `logic/rollout.go` | New file: `MCRollout(g, myIdx, oppIdx, totalRollouts, maxTurns) map[Direction]RolloutStats`. Generates direction pairs, distributes rollouts, runs random games using `CloneFromPool`/`Release` + `Step`. |
+| `logic/rollout.go` | `randomValidMove(g, snakeIdx)` — uniform random from non-wall moves, xorshift64 PRNG |
+| `logic/rollout.go` | `RolloutStats` struct: `SurvivalRate float64`, `AvgTurns float64`, `Rollouts int` |
+| `trace.go` | Add per-direction rollout fields: `MCUp`, `MCDown`, `MCLeft`, `MCRight` (survival rate 0.0-1.0), `MCBestDir`, `MCWorstDir` |
+| `trace.go` | Call `MCRollout` in `traceTurn()` when trace enabled (outside game budget) |
+| `cmd/analyze/main.go` | New analyze mode: `rollout` — compare MC survival rates vs BRS chosen direction vs game outcome. Report: (1) MC-BRS agreement rate, (2) when MC disagrees, who was right, (3) MC worst-direction as death predictor |
+
+### Cost budget
+
+| Component | Cost |
+|-----------|------|
+| Per rollout step | `CloneFromPool` (19ns) + `Step` (49ns) + random move (~5ns) ≈ 73ns |
+| Per rollout (200 turns) | ~15μs |
+| 1000 rollouts total | ~15ms |
+| **Trace-only (Phase A)** | 15ms, computed outside game budget — fine |
+| **If wired later (Phase B)** | ~30-50ms carved from 300ms budget → ~2000 rollouts → ~250/direction pair |
+
+### Testing plan
+
+```
+make trace N=50
+make analyze MODE=rollout
+```
+
+**Success criteria for Phase A:**
+- MC worst-direction survival rate < 30% predicts actual death within 50 turns
+- MC direction ranking disagrees with BRS choice on > 10% of turns (otherwise redundant)
+- When MC disagrees with BRS AND game is lost, MC was right > 60% of the time
 
 ---
 
-## Iter 37 — Adaptive Time Management
+## Iter 37 — Survival Mode: Longest Path in Confined Space
+
+**Status:** PLANNED (deferred, depends on Iter 35 data)
+
+**Goal:** When partitioned or confined, switch from BRS to a space-filling survival algorithm. BRS simulates irrelevant opponent moves in partitions. A longest-path algorithm directly optimizes survival.
+
+**Trigger:** `vr.IsPartitioned == true` or `EscapeReachabilityPooled(g, myIdx, 6) < 20`
+
+**Approach:** Exhaustive DFS for small partitions (N < 30, microseconds), greedy flood-fill + tail-chasing for larger (N = 30-60). Tail-aware: account for tail retraction opening cells behind us.
+
+**Files:** `logic/survival.go` (new), `logic/search.go` (partition bypass)
+
+---
+
+## Iter 38 — Adaptive Time Management
 
 **Status:** PLANNED (lower priority)
 
-**Goal:** Allocate more search time in critical positions (partitioned, low escape, near-death) and less in stable positions (open board, high territory). Currently every move gets 300ms. Critical positions need deeper search; stable positions are decided by depth 8.
+**Goal:** Allocate more search time in critical positions (partitioned, low escape, near-death) and less in stable positions (open board, high territory). Currently every move gets 300ms.
 
-### Implementation Plan
-
-- Base budget: 300ms
-- Critical position (low escape, partitioned): up to 450ms
-- Stable position (high territory, open board): down to 200ms
+- Critical position: up to 450ms
+- Stable position: down to 200ms
 - Net budget per game remains similar
 
-### Files to Modify
-
-| File | Change |
-|------|--------|
-| `main.go` | Dynamic budget calculation based on position features |
+**Files:** `main.go` (dynamic budget calculation)
 
 ---
 
@@ -259,11 +222,19 @@ Two signals from this data:
 
 ## Future Directions
 
+**Long-horizon alternatives (if MC rollout doesn't pan out):**
+- **Simplified territory projection**: strip board to heads + territory boundaries, simulate territory evolution without full game rules. No body tracking, no food — just "who controls what space."
+- **Voronoi trajectory simulation**: project Voronoi boundary forward assuming both snakes move toward territory center. Detect convergence toward partition.
+- **Root-only Tarjan's**: compute AP/bottleneck once at root (not per leaf), use as strategic bias. Avoids the depth regression that killed Iter 34.
+
 **Weight recalibration:**
-After structural changes (bottleneck routing, survival mode), all weights may need recalibration. Test against v17.
+After structural changes, all weights may need recalibration. Test against v17.
 
 **CorridorRatio / FunnelRatio:**
 Data shows these are lagging indicators (only 4-12% detectable at search leaf). NOT viable as eval signals. But could inform survival mode trigger or time management.
+
+**Tail reachability as eval signal: ❌ ruled out by Iter 35 data.**
+Tail is always reachable (100% of turns). Loopability is a lagging indicator (fires 1-2 turns before death). Not viable as eval signal.
 
 ---
 
@@ -288,3 +259,4 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | 31 | `snapshots/haruko-e7f195f` | ~442 | Eval diet: strip dead signals + Voronoi fields; 55% vs v17, 57% vs v28 |
 | 32 | `snapshots/haruko-69c43bb` | ~443-451 | Territory connectivity (absolute MyConnectivity); 56-61% vs v31 |
 | 34 | — | — | ❌ Dead end: bottleneck routing (40-57%, depth regression) |
+| 35 | — | — | ❌ Dead end: tail reachability/loopability (signals too late) |

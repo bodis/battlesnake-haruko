@@ -646,3 +646,52 @@ Used tail-aware `isSafeDir` for BRS move pruning (replacing `wallSafeMoves` with
 **Benchmark:** Evaluate early game: ~1270ns (+132ns), late game: ~208ns (+13ns). Zero allocs maintained. Well within <200ns budget.
 
 **Result:** 56% and 61% vs v31 (N=100 each). ~443-451 avg turns.
+
+---
+
+## Iter 35 — Tail Reachability / Loopability Diagnostic (Dead End)
+
+**Status:** ❌ DEAD END — signals are lagging indicators, not predictive
+
+**Goal:** Instrument trace-only diagnostic signals (tail reachability, loopability, turns-to-death estimate) to evaluate whether they predict death. No eval or search changes — all code runs only when `HARUKO_TRACE=1`.
+
+**What was built:**
+1. `voronoiTerritoryImpl` — extracted core Voronoi BFS so `VoronoiTerritoryWithOwner` can copy the owner array without duplicating 200 lines
+2. `VoronoiTerritoryWithOwner(g, myIdx, skipBottleneck, ownerOut)` — copies per-cell owner tags to caller buffer
+3. `BFSTailDist(g, snakeIdx, owner, w, h)` — zero-alloc BFS from head to tail through owned territory + body cells
+4. `MaxBoardCells` exported constant
+5. 7 new trace fields: `MyTailReachable`, `MyTailBFSDist`, `OppTailReachable`, `OppTailBFSDist`, `MyLoopable`, `OppLoopable`, `TurnsToDeathEst`
+6. `modeSurvival` analyze mode with 4 analysis sections
+
+**Analysis results (100 self-play games, N=200 perspectives):**
+
+| Finding | Detail |
+|---------|--------|
+| Tail always reachable | 100% of all turns, wins and losses — zero discriminative value |
+| Loopability is a lagging indicator | 48% at 1 turn before death, 19% at 5 turns, 6% at 20 turns, 1% at 50 turns |
+| Deaths are instantaneous | Territory collapses from 20-50 to 1 in a single turn (90% of non-starvation deaths) |
+| Loopability asymmetry is symmetric | mine-only 3.9% wins / 2.4% losses — mirrored, small effect |
+| TurnsToDeathEst is inaccurate | MAE=36 turns, bias=-27.3 (massive underestimate) |
+| Starvation deaths are different | 10% of deaths — loopable=true, territory=58-86, just ran out of health |
+
+**Why it failed:**
+
+1. **Deaths are sudden, not gradual.** The dominant death pattern (90% of non-starvation losses): everything looks fine, then in 1 turn territory collapses from 20-50 to 1 and the snake is dead next turn. The opponent closes the last corridor exit in a single move.
+
+2. **The collapse happens beyond BRS horizon.** BRS depth 14 (~7 full turns) cannot foresee the squeeze. The opponent's corridor-closing move is decided many turns ahead, and the 1-turn collapse is the result, not the cause.
+
+3. **Tail reachability is trivially satisfied.** BFS through owned territory + body cells always finds a path. The body itself provides a highway from head to tail. The signal never fires false.
+
+4. **Loopability is a consequence, not a cause.** It drops because territory collapses, not the other way around. By the time loopability goes false, the snake is already dead in 1-2 turns.
+
+5. **TurnsToDeathEst (escape reachability) doesn't correlate with actual survival time.** Escape routes measure local space, not long-term viability.
+
+**Key lesson:** The hypothesis "if a snake can't reach its tail, it's trapped" is not supported. The snake can almost always reach its tail. The real problem is that deaths are 1-turn territory collapses beyond search horizon. Survival signals need to predict the collapse BEFORE it happens, not detect it after. Possible approaches: territory trend detection, opponent corridor proximity, or longer-horizon rollout simulation (see Iter 36).
+
+**Infrastructure retained:**
+- `voronoiTerritoryImpl` refactor (cleaner code separation, enables future owner-array access)
+- `VoronoiTerritoryWithOwner` function (zero-alloc owner array access for diagnostic use)
+- `BFSTailDist` function (zero-alloc BFS, useful for future survival mode if needed)
+- `MaxBoardCells` exported constant
+- `modeSurvival` analyze mode (4-section tail/loop/death analysis)
+- 7 trace fields for future diagnostic use

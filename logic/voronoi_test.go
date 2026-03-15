@@ -383,6 +383,107 @@ func TestVoronoiResult_7x7Board(t *testing.T) {
 	}
 }
 
+// --- BFSTailDist tests ---
+
+func TestBFSTailDist_SimpleOpenPath(t *testing.T) {
+	// 5x5 board, snake at (0,0)→(1,0)→(2,0). Territory connects head to tail.
+	g := &GameSim{
+		Width:  5,
+		Height: 5,
+		Snakes: []SimSnake{
+			{ID: "a", Body: []Coord{{0, 0}, {1, 0}, {2, 0}}, Health: 100, Length: 3},
+		},
+	}
+	var ownerBuf [MaxBoardCells]int8
+	VoronoiTerritoryWithOwner(g, 0, true, ownerBuf[:])
+	dist, reachable := BFSTailDist(g, 0, ownerBuf[:], g.Width, g.Height)
+	if !reachable {
+		t.Fatal("expected tail to be reachable")
+	}
+	if dist != 2 {
+		t.Errorf("expected dist=2, got %d", dist)
+	}
+}
+
+func TestBFSTailDist_BlockedPath(t *testing.T) {
+	// 5x3 board. Snake A owns left side, tail is on right side (unreachable).
+	// Snake B's body wall blocks the path.
+	g := &GameSim{
+		Width:  5,
+		Height: 3,
+		Snakes: []SimSnake{
+			{ID: "a", Body: []Coord{{0, 1}, {4, 1}}, Health: 100, Length: 2},
+			{ID: "b", Body: []Coord{{4, 2}, {2, 0}, {2, 1}, {2, 2}, {3, 2}}, Health: 100, Length: 5},
+		},
+	}
+	var ownerBuf [MaxBoardCells]int8
+	VoronoiTerritoryWithOwner(g, 0, true, ownerBuf[:])
+	_, reachable := BFSTailDist(g, 0, ownerBuf[:], g.Width, g.Height)
+	if reachable {
+		t.Error("expected tail to be unreachable when partitioned by opponent body")
+	}
+}
+
+func TestBFSTailDist_PathThroughBody(t *testing.T) {
+	// Snake's body bridges a gap in its territory.
+	// 3x3 board, snake wraps: head (0,0), body (1,0), (2,0), (2,1), tail (2,2).
+	// Only one other snake far away; territory alone may not connect, but body does.
+	g := &GameSim{
+		Width:  3,
+		Height: 3,
+		Snakes: []SimSnake{
+			{ID: "a", Body: []Coord{{0, 0}, {1, 0}, {2, 0}, {2, 1}, {2, 2}}, Health: 100, Length: 5},
+		},
+	}
+	var ownerBuf [MaxBoardCells]int8
+	VoronoiTerritoryWithOwner(g, 0, true, ownerBuf[:])
+	dist, reachable := BFSTailDist(g, 0, ownerBuf[:], g.Width, g.Height)
+	if !reachable {
+		t.Fatal("expected tail reachable through body cells")
+	}
+	// Shortest path: (0,0)→(1,0)→(2,0)→(2,1)→(2,2) = 4 steps
+	if dist != 4 {
+		t.Errorf("expected dist=4, got %d", dist)
+	}
+}
+
+func TestBFSTailDist_LengthOne(t *testing.T) {
+	g := &GameSim{
+		Width:  5,
+		Height: 5,
+		Snakes: []SimSnake{
+			{ID: "a", Body: []Coord{{2, 2}}, Health: 100, Length: 1},
+		},
+	}
+	var ownerBuf [MaxBoardCells]int8
+	VoronoiTerritoryWithOwner(g, 0, true, ownerBuf[:])
+	dist, reachable := BFSTailDist(g, 0, ownerBuf[:], g.Width, g.Height)
+	if !reachable {
+		t.Fatal("expected reachable for length-1 snake")
+	}
+	if dist != 0 {
+		t.Errorf("expected dist=0 for length-1 snake, got %d", dist)
+	}
+}
+
+func TestBFSTailDist_DeadSnake(t *testing.T) {
+	g := &GameSim{
+		Width:  5,
+		Height: 5,
+		Snakes: []SimSnake{
+			{ID: "a", Body: []Coord{{2, 2}, {2, 1}}, Health: 0, Length: 2, EliminatedCause: "starvation"},
+		},
+	}
+	var ownerBuf [MaxBoardCells]int8
+	dist, reachable := BFSTailDist(g, 0, ownerBuf[:], g.Width, g.Height)
+	if reachable {
+		t.Error("expected unreachable for dead snake")
+	}
+	if dist != -1 {
+		t.Errorf("expected dist=-1 for dead snake, got %d", dist)
+	}
+}
+
 func TestVoronoiResult_SingleSnakeTerritory(t *testing.T) {
 	g := &GameSim{
 		Width:  5,

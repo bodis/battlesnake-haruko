@@ -15,7 +15,7 @@ See [ENGINE.md](ENGINE.md) for full architecture, eval signals, version history,
 - `logic/diagnostic.go` — `EscapeReachability` (allocating, trace-only)
 - `logic/bench_test.go` — microbenchmarks
 - `trace.go` — JSONL trace recording (diagnostic fields included)
-- `cmd/analyze/main.go` — trace analysis (7 modes: summary, turning-points, deaths, wins, signals, trajectories, correlation, decision-points)
+- `cmd/analyze/main.go` — trace analysis (8 modes: summary, turning-points, deaths, wins, signals, trajectories, correlation, decision-points, survival)
 
 ## Dev workflow
 - `make local` — build → start → 1v1 self-game → stop
@@ -37,11 +37,11 @@ When finishing an iteration:
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 - Board sizes: 7x7, 11x11, 19x19 all supported. `maxBoardCells=361`. Loops use `Width*Height`, no 11x11 cost.
 
-## Current state (Iter 34 dead end, v32 current, Iter 35 next)
-v32: Territory connectivity signal (absolute MyConnectivity). 56-61% vs v31. Iter 33 dead end (escape/territory eval signals: 37-54%). Iter 34 dead end (bottleneck routing: 40-57%, Tarjan's too expensive for leaf eval). See ROADMAP.md for details.
+## Current state (Iter 35 dead end, v32 current, Iter 36 next)
+v32: Territory connectivity signal (absolute MyConnectivity). 56-61% vs v31. Iter 33-35 dead ends. Iter 35: tail reachability/loopability signals are lagging indicators — deaths are instantaneous 1-turn territory collapses. See ROADMAP.md for details.
 
 ## Direction
-Iter 35: Survival mode (longest path in confined space). When partitioned, switch from BRS to space-filling algorithm. Iter 36: Adaptive time management. See ROADMAP.md.
+Iter 36: MC strategic rollout (diagnostic) — random game rollouts to detect long-horizon death traps. Iter 37: Survival mode (longest path in confined space). See ROADMAP.md.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.

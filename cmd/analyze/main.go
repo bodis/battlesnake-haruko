@@ -61,6 +61,15 @@ type record struct {
 	MyEscapeRoutes  int `json:"my_escape_routes"`
 	OppEscapeRoutes int `json:"opp_escape_routes"`
 
+	// Diagnostic: tail reachability and loopability
+	MyTailReachable  bool `json:"my_tail_reachable"`
+	MyTailBFSDist    int  `json:"my_tail_bfs_dist"`
+	OppTailReachable bool `json:"opp_tail_reachable"`
+	OppTailBFSDist   int  `json:"opp_tail_bfs_dist"`
+	MyLoopable       bool `json:"my_loopable"`
+	OppLoopable      bool `json:"opp_loopable"`
+	TurnsToDeathEst  int  `json:"turns_to_death_est"`
+
 	// Diagnostic: derived ratios
 	MyFunnelRatio    float64 `json:"my_funnel_ratio"`
 	MyCorridorRatio  float64 `json:"my_corridor_ratio"`
@@ -1725,8 +1734,204 @@ func main() {
 		modeCorrelation(games)
 	case "decision-points":
 		modeDecisionPoints(games, *top)
+	case "survival":
+		modeSurvival(games)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown mode: %s\n", *mode)
 		os.Exit(1)
+	}
+}
+
+func modeSurvival(games []game) {
+	// Section 1: Tail Reachability Distribution (wins vs losses)
+	fmt.Println("=== Tail Reachability Distribution ===")
+	type distStats struct {
+		count         int
+		reachable     int
+		distSum       int
+		distMin       int
+		distMax       int
+	}
+	winStats := distStats{distMin: math.MaxInt32}
+	lossStats := distStats{distMin: math.MaxInt32}
+
+	for _, g := range games {
+		isWin := g.footer.Result == "win"
+		isLoss := g.footer.Result == "loss"
+		if !isWin && !isLoss {
+			continue
+		}
+		st := &lossStats
+		if isWin {
+			st = &winStats
+		}
+		for _, t := range g.turns {
+			if t.Turn == nil {
+				continue
+			}
+			st.count++
+			if t.MyTailReachable {
+				st.reachable++
+				if t.MyTailBFSDist > 0 {
+					st.distSum += t.MyTailBFSDist
+					if t.MyTailBFSDist < st.distMin {
+						st.distMin = t.MyTailBFSDist
+					}
+					if t.MyTailBFSDist > st.distMax {
+						st.distMax = t.MyTailBFSDist
+					}
+				}
+			}
+		}
+	}
+
+	printDistStats := func(label string, st distStats) {
+		if st.count == 0 {
+			fmt.Printf("  %s: no data\n", label)
+			return
+		}
+		pct := 100.0 * float64(st.reachable) / float64(st.count)
+		fmt.Printf("  %s: %d turns, %.1f%% tail-reachable", label, st.count, pct)
+		if st.reachable > 0 {
+			avg := float64(st.distSum) / float64(st.reachable)
+			fmt.Printf(", avg dist=%.1f, min=%d, max=%d", avg, st.distMin, st.distMax)
+		}
+		fmt.Println()
+	}
+	printDistStats("Wins ", winStats)
+	printDistStats("Losses", lossStats)
+
+	// Section 2: Loopability as Death Predictor
+	fmt.Println("\n=== Loopability as Death Predictor ===")
+	lookbacks := []int{1, 2, 5, 10, 20, 50}
+	notLoopableCounts := make([]int, len(lookbacks))
+	totalCounts := make([]int, len(lookbacks))
+
+	for _, g := range games {
+		if g.footer.Result != "loss" {
+			continue
+		}
+		turns := g.turns
+		if len(turns) == 0 {
+			continue
+		}
+		deathIdx := len(turns) - 1
+		for i, lb := range lookbacks {
+			checkIdx := deathIdx - lb
+			if checkIdx < 0 {
+				continue
+			}
+			totalCounts[i]++
+			if !turns[checkIdx].MyLoopable {
+				notLoopableCounts[i]++
+			}
+		}
+	}
+
+	fmt.Println("  Turns before death | !Loopable | Total | %")
+	for i, lb := range lookbacks {
+		if totalCounts[i] == 0 {
+			continue
+		}
+		pct := 100.0 * float64(notLoopableCounts[i]) / float64(totalCounts[i])
+		fmt.Printf("  %18d | %9d | %5d | %5.1f%%\n", lb, notLoopableCounts[i], totalCounts[i], pct)
+	}
+
+	// Section 3: Loopability Asymmetry
+	fmt.Println("\n=== Loopability Asymmetry ===")
+	type asymBuckets struct {
+		bothLoop int
+		mineOnly int
+		oppOnly  int
+		neither  int
+	}
+	var winAsym, lossAsym asymBuckets
+
+	for _, g := range games {
+		isWin := g.footer.Result == "win"
+		isLoss := g.footer.Result == "loss"
+		if !isWin && !isLoss {
+			continue
+		}
+		ab := &lossAsym
+		if isWin {
+			ab = &winAsym
+		}
+		for _, t := range g.turns {
+			if t.Turn == nil {
+				continue
+			}
+			switch {
+			case t.MyLoopable && t.OppLoopable:
+				ab.bothLoop++
+			case t.MyLoopable && !t.OppLoopable:
+				ab.mineOnly++
+			case !t.MyLoopable && t.OppLoopable:
+				ab.oppOnly++
+			default:
+				ab.neither++
+			}
+		}
+	}
+
+	printAsym := func(label string, ab asymBuckets) {
+		total := ab.bothLoop + ab.mineOnly + ab.oppOnly + ab.neither
+		if total == 0 {
+			fmt.Printf("  %s: no data\n", label)
+			return
+		}
+		pct := func(n int) float64 { return 100.0 * float64(n) / float64(total) }
+		fmt.Printf("  %s (%d turns): both=%.1f%%, mine-only=%.1f%%, opp-only=%.1f%%, neither=%.1f%%\n",
+			label, total, pct(ab.bothLoop), pct(ab.mineOnly), pct(ab.oppOnly), pct(ab.neither))
+	}
+	printAsym("Wins  ", winAsym)
+	printAsym("Losses", lossAsym)
+
+	// Section 4: TurnsToDeathEst Accuracy
+	fmt.Println("\n=== TurnsToDeathEst Accuracy ===")
+	var errors []float64
+	for _, g := range games {
+		if g.footer.Result != "loss" {
+			continue
+		}
+		turns := g.turns
+		if len(turns) == 0 {
+			continue
+		}
+		deathTurn := 0
+		if turns[len(turns)-1].Turn != nil {
+			deathTurn = *turns[len(turns)-1].Turn
+		}
+		for _, t := range turns {
+			if t.Turn == nil || t.MyLoopable || t.TurnsToDeathEst <= 0 {
+				continue
+			}
+			actual := deathTurn - *t.Turn
+			if actual <= 0 {
+				continue
+			}
+			errors = append(errors, float64(t.TurnsToDeathEst)-float64(actual))
+		}
+	}
+
+	if len(errors) == 0 {
+		fmt.Println("  No data points (no losses with !loopable + TurnsToDeathEst > 0)")
+	} else {
+		sumAbs := 0.0
+		sumSigned := 0.0
+		for _, e := range errors {
+			sumSigned += e
+			if e < 0 {
+				sumAbs -= e
+			} else {
+				sumAbs += e
+			}
+		}
+		n := float64(len(errors))
+		mae := sumAbs / n
+		bias := sumSigned / n
+		fmt.Printf("  Data points: %d\n", len(errors))
+		fmt.Printf("  Mean Absolute Error: %.1f turns\n", mae)
+		fmt.Printf("  Mean Signed Error (bias): %.1f turns (positive = overestimate)\n", bias)
 	}
 }

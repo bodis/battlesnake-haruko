@@ -129,6 +129,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 31 | Eval diet: strip 3 dead signals + 6 Voronoi fields | 55% vs v17, 57% vs v28, ~442 avg turns |
 | 32 | Territory connectivity signal (absolute MyConnectivity) | 56-61% vs v31, ~443-451 avg turns |
 | 34 | Bottleneck-aware routing (head-side AP region) | ❌ Dead end (40-57%, depth regression) |
+| 35 | Tail reachability / loopability diagnostic signals | ❌ Dead end (signals too late, 1-turn death collapse) |
 
 ## Dead Ends
 
@@ -166,6 +167,9 @@ Flat depth-1 MCTS (UCB1, random opponent moves, xorshift64 PRNG, ~52K sims/50ms)
 
 ### Bottleneck routing via Tarjan's in leaf eval (Iter 34): 40-57% (depth regression)
 Head-side flood fill from snake head through non-AP territory cells, penalizing when head is on the small side of an AP. Signal concept is directional (guides toward larger region, not general narrowness penalty). Failed because Tarjan's AP detection costs ~2150ns/eval — 3x the Voronoi baseline. At every BRS leaf node, this causes 1-2 plies of depth regression. Phase-gating (running Tarjan's only in late game) reduces frequency but late-game depth is the most critical. N=200 confirmation showed gate=0.5/w=10 was 50.5% (initial N=100 of 57% was noise). Any eval signal requiring Tarjan's is not viable for leaf evaluation. Infrastructure retained for diagnostic/root-only use.
+
+### Tail reachability / loopability as death predictor (Iter 35): signals too late
+Instrumented trace-only diagnostic signals: tail reachability (BFS from head to tail through owned territory + body), loopability (tail reachable AND territory >= snake length), TurnsToDeathEst (escape reachability when not loopable). 100-game self-play analysis found: (1) Tail is always reachable (100% of all turns, wins and losses) — zero discriminative value. (2) Loopability drops only 1-2 turns before death (48% at 1 turn, 19% at 5 turns, 6% at 20 turns) — lagging indicator, not early warning. (3) Territory collapses from 20-50 to 1 in a single turn in 90% of non-starvation deaths — the opponent closes the last corridor exit in one move. (4) Loopability asymmetry is symmetric in self-play (mine-only 3.9% in wins vs 2.4% in losses). (5) TurnsToDeathEst has MAE=36 turns, bias=-27.3 (massive underestimate). The fundamental problem: deaths are instantaneous 1-turn territory collapses beyond BRS horizon, not gradual squeezes. By the time any survival signal fires, it's already too late. These signals cannot work as eval inputs.
 
 ### Key principle
 Every past win came from deeper search or better eval. Search mechanics (pruning, ordering) are saturated at BF=4. The remaining lever is eval quality — but new signals must add genuinely new information, not restate what Voronoi territory already captures. Dominance-based weight modulation is also ineffective because both sides of self-play share the same eval. Sound pruning (wall-only) is a valid third lever: it reduces BF without losing information.
