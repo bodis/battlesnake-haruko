@@ -695,3 +695,118 @@ Used tail-aware `isSafeDir` for BRS move pruning (replacing `wallSafeMoves` with
 - `MaxBoardCells` exported constant
 - `modeSurvival` analyze mode (4-section tail/loop/death analysis)
 - 7 trace fields for future diagnostic use
+
+---
+
+## Iter 36 — MC Rollout with Random Play (Dead End — Random Policy Too Noisy)
+
+**Status:** ❌ DEAD END (random policy) — 32–52% across 22 configurations
+
+**Goal:** Run random game rollouts from root position to detect which direction leads to long-term death. Computed once per move after BRS completes (separate budget, no BRS depth loss).
+
+### What was implemented
+
+- `logic/rollout.go`: `MCRolloutTimed(g, myIdx, oppIdx, maxTurns, budget)` — timed round-robin rollouts across valid root directions, `randomSafeMove` (isSafeDir + wall fallback), xorshift64 PRNG
+- `logic/rollout.go`: `applyMCBias(result, mc, lateBlend)` — phase-scaled BRS score adjustment using MC survival spread
+- `logic/search.go`: `BestMoveIterative` wired to run MC after BRS, apply bias
+- `main.go`: Adaptive budget system, env var tuning (MC_WEIGHT, MC_SPREAD, MC_GATE, MC_TURNS)
+- `trace.go`: Diagnostic MC rollouts (30ms, outside game budget) with per-direction survival rates
+- Throughput: ~4000-6000 rollouts in 20-50ms budget (~100 turns each)
+
+### Parameter sweep results
+
+**Phase 1 (N=50 vs v32):**
+
+| Config | Win% | Notes |
+|--------|------|-------|
+| mc-off (w=0) | 40% | Baseline (noise at N=50) |
+| w=10, s=0.10 | 50% | |
+| w=15, s=0.10 | 44% | Original setting |
+| w=20, s=0.10 | 44% | |
+| w=25, s=0.10 | 38% | Too aggressive |
+| w=30, s=0.10 | 38% | Too aggressive |
+| w=15, s=0.05 | 50% | |
+| w=20, s=0.05 | **56%** | Best N=50 — but noise |
+| w=15, gate=0.3 | 32% | Late-only MC terrible |
+| w=15, turns=50 | 40% | Too few rollout turns |
+| w=15, turns=200 | 42% | Too few samples |
+
+**Phase 2 (N=100 vs v32) — confirming top configs:**
+
+| Config | Win% |
+|--------|------|
+| w=20, s=0.05 | **43%** (N=50 "56%" was noise) |
+| w=18, s=0.05 | 45% |
+| w=22, s=0.05 | 45% |
+| w=20, s=0.03 | 44% |
+| w=20, s=0.07 | 52% |
+| w=20, s=0.05, gate=0.05 | 44% |
+| w=20, s=0.05, turns=75 | 43% |
+
+**No configuration reliably beats v32 at N=100.**
+
+### Why random rollouts fail
+
+**Same root cause as Iter 29 (MCTS):** random opponents don't model how deaths actually happen.
+
+1. **MC favors conservative play.** Random survival is highest in open space. MC penalizes aggressive squeezing — but squeezing is the winning strategy. Same failure mode as Iter 33 (defensive eval signals: 37-48%).
+
+2. **MC is extremely noisy.** Trace analysis (10 games, 3642 turns):
+   - MC disagrees with BRS on **44% of all turns** (early game: 52%, late: 33%)
+   - Median survival spread: 0.078 — barely above activation thresholds
+   - BRS picks MC's "worst" direction 28% of the time — but BRS is right (tactical depth)
+
+3. **Random play can't model territory collapse.** Deaths happen when the optimal opponent closes a corridor exit in one move. Random opponents do this by accident ~5% of the time — MC survival rates converge to ~50-70% in all directions, drowning the signal.
+
+### Infrastructure retained
+
+- `logic/rollout.go`: `MCRolloutTimed`, `RolloutStats`, `MCRolloutResult`, `applyMCBias`, `randomSafeMove`, tunable params (MC_WEIGHT, MC_SPREAD, MC_GATE, MC_TURNS)
+- `logic/search.go`: `BestMoveIterative` with BRS+MC pipeline, `BRSResult`
+- `main.go`: Adaptive budget system, env var MC tuning
+- `trace.go`: Diagnostic MC rollout per-direction survival in trace output
+- `scripts/mc_sweep.sh`, `scripts/mc_sweep2.sh`: parameter sweep infrastructure
+
+---
+
+## Iter 36b — MC Rollout v2: Smart Policy + Top-2 Focused (Dead End)
+
+**Status:** ❌ DEAD END — 47% vs v32 (N=100), 0 MC overrides in 7504 traced turns
+
+**Goal:** Fix Iter 36's random rollout policy with (1) territory-aware heuristic (`smartRolloutMove`: flood-count BFS + chase/flee + food-seek, ~1730ns/move) and (2) focus MC budget on BRS top-2 directions only (skip when gap ≥ 5).
+
+**What was implemented:**
+- `quickFloodCount(g, start, 12)`: zero-alloc BFS reachable cell count (~655ns, 0 allocs)
+- `smartRolloutMove(g, snakeIdx, oppIdx, rng)`: layered policy — safe moves → food-seek (health<25) → flood count → chase/flee bias, 20% random exploration (~1730ns, 0 allocs)
+- `MCRolloutTop2Timed(g, myIdx, oppIdx, brsResult, maxTurns, budget, scoreGap)`: MC on BRS top-2 only, skips if gap ≥ scoreGap
+- Env vars: MC_GAP, MC_SMART for A/B sweep
+
+**Result:** 47% vs v32 (N=100)
+
+**Deep trace analysis (20 games, 7504 turns):**
+
+1. **Phase gate kills 98% of MC decisions.** `lateBlend ≥ 0.1` occurs in only 1.2% of turns (88/7504). MC fires 2220 times but 2176 (98%) are phase-gated — `applyMCBias` returns BRS unchanged.
+
+2. **When phase gate passes, spread too low.** Only 44 turns have `lateBlend ≥ 0.1` AND MC fired. Of those, only 4 also have spread ≥ 0.10.
+
+3. **MC adjustment too weak to override.** Max MC adjustment ever: 1.47 points. BRS gaps: 0.0-1.5. Zero overrides in 7504 turns — MC is structurally unable to change any decision.
+
+4. **Removing phase gate: MC is anti-predictive.** Simulation across all turns:
+   - MC disagrees with BRS ~47% of turns (coin flip)
+   - Loss rate when ignoring MC: 50.8% at all spreads (noise)
+   - At high confidence (spread ≥ 0.15, gap < 2): loss=41.5% — **following BRS wins more when MC disagrees most**
+   - Winners have LOWER MC survival (0.396) than losers (0.447)
+
+5. **Smart policy = same wrong signal as random.** Territory-aware heuristic still optimizes survival, and survival is anti-correlated with winning. Aggressive squeezing (the winning strategy) gets penalized by both random and smart rollout policies.
+
+6. **Rollout volume too low.** Smart policy at 1730ns/move → 145 rollouts/dir in 50ms (StdErr=0.042). Need 400+ for statistical significance at spread=0.10.
+
+**RL as rollout policy — infeasible:**
+- Current 2.1M CNN: ~500μs/inference → 0.5 rollouts/dir in 50ms
+- Tiny MLP (5K params): fast enough (~1-3μs) but can't learn territorial strategy
+- Survival RL: learns same anti-predictive signal (prefer open space = conservative = loses)
+- Competitive RL: 0% vs BRS at 2.1M params; 5K-param version dramatically worse
+- For useful RL rollouts: need ≤625ns/move AND correct signal — mutually exclusive
+
+**Key lesson:** MC rollouts are a closed dead end for this engine. The survival signal is fundamentally anti-correlated with winning in self-play. No rollout policy (random, heuristic, or RL) can fix this because the signal itself points the wrong way. BRS at depth 14 already captures everything within its horizon; rollouts beyond that horizon with approximate play add noise, not information. Future improvement paths: eval distillation from RL, RL single-eval tiebreaker (ONNX in Go), survival mode for confined spaces, or adaptive time management.
+
+**Infrastructure retained:** All infrastructure from Iter 36 remains unchanged. No new infrastructure added to codebase (all Iter 36b code was reverted).

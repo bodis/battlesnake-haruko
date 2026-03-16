@@ -11,10 +11,10 @@
 | Metric | Value |
 |--------|-------|
 | **Completed** | Iterations 1-20, 23-28, 30-35 (see below + ROADMAP_FINISHED.md) |
-| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%), Iter 28 partial (tail-aware BRS pruning: 43%), Iter 29 (hybrid BRS+MCTS: 2–46%), Iter 33 (escape/territory eval signals: 37–54%), Iter 34 (bottleneck routing: 40-57%, depth regression), Iter 35 (tail reachability/loopability: signals too late), Iter 36 (MC random rollouts: 32–52%, same flaw as MCTS) |
+| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%), Iter 28 partial (tail-aware BRS pruning: 43%), Iter 29 (hybrid BRS+MCTS: 2–46%), Iter 33 (escape/territory eval signals: 37–54%), Iter 34 (bottleneck routing: 40-57%, depth regression), Iter 35 (tail reachability/loopability: signals too late), Iter 36 (MC random rollouts: 32–52%), Iter 36b (MC smart rollouts + top-2: 47%, MC structurally dead) |
 | **Current** | v32 Territory connectivity: absolute MyConnectivity signal; 56-61% vs v31 (N=100); ~443-451 avg turns |
-| **Next** | Iter 36b (MC rollout v2: smart policy + top-2 focused) → Iter 37 (survival mode) |
-| **Key insight** | Random rollout survival ≠ optimal play survival. MC with random policy has the same fundamental flaw as MCTS (Iter 29): favors moves good against weak play, penalizes aggressive squeezing. Need smarter rollout policy and focused budget (top-2 BRS directions only). |
+| **Next** | Iter 37 (survival mode) → Iter 38 (adaptive time management) |
+| **Key insight** | MC rollouts are a closed dead end. Smart policy (flood+chase, 1730ns) has same anti-predictive signal as random: survival correlates with conservative play, but winners play aggressively. Phase gate blocks 98% of MC decisions; removing it makes things worse (MC anti-predictive at high confidence). RL as rollout policy infeasible (speed/quality tradeoff). Future improvement must come from eval quality, search mechanics, or hybrid RL (distillation/single-eval). |
 
 ---
 
@@ -90,100 +90,6 @@
 
 ---
 
-## Iter 36 — MC Rollout with Random Play (Dead End — Random Policy Too Noisy)
-
-**Status:** ❌ DEAD END (random policy) — 32–52% across 22 configurations
-
-**Goal:** Run random game rollouts from root position to detect which direction leads to long-term death. Computed once per move after BRS completes (separate budget, no BRS depth loss).
-
-### What was implemented
-
-- `logic/rollout.go`: `MCRolloutTimed(g, myIdx, oppIdx, maxTurns, budget)` — timed round-robin rollouts across valid root directions, `randomSafeMove` (isSafeDir + wall fallback), xorshift64 PRNG
-- `logic/rollout.go`: `applyMCBias(result, mc, lateBlend)` — phase-scaled BRS score adjustment using MC survival spread
-- `logic/search.go`: `BestMoveIterative` wired to run MC after BRS, apply bias
-- `main.go`: Adaptive budget system, env var tuning (MC_WEIGHT, MC_SPREAD, MC_GATE, MC_TURNS)
-- `trace.go`: Diagnostic MC rollouts (30ms, outside game budget) with per-direction survival rates
-- Throughput: ~4000-6000 rollouts in 20-50ms budget (~100 turns each)
-
-### Parameter sweep results
-
-**Phase 1 (N=50 vs v32):**
-
-| Config | Win% | Notes |
-|--------|------|-------|
-| mc-off (w=0) | 40% | Baseline (noise at N=50) |
-| w=10, s=0.10 | 50% | |
-| w=15, s=0.10 | 44% | Original setting |
-| w=20, s=0.10 | 44% | |
-| w=25, s=0.10 | 38% | Too aggressive |
-| w=30, s=0.10 | 38% | Too aggressive |
-| w=15, s=0.05 | 50% | |
-| w=20, s=0.05 | **56%** | Best N=50 — but noise |
-| w=15, gate=0.3 | 32% | Late-only MC terrible |
-| w=15, turns=50 | 40% | Too few rollout turns |
-| w=15, turns=200 | 42% | Too few samples |
-
-**Phase 2 (N=100 vs v32) — confirming top configs:**
-
-| Config | Win% |
-|--------|------|
-| w=20, s=0.05 | **43%** (N=50 "56%" was noise) |
-| w=18, s=0.05 | 45% |
-| w=22, s=0.05 | 45% |
-| w=20, s=0.03 | 44% |
-| w=20, s=0.07 | 52% |
-| w=20, s=0.05, gate=0.05 | 44% |
-| w=20, s=0.05, turns=75 | 43% |
-
-**No configuration reliably beats v32 at N=100.**
-
-### Why random rollouts fail
-
-**Same root cause as Iter 29 (MCTS):** random opponents don't model how deaths actually happen.
-
-1. **MC favors conservative play.** Random survival is highest in open space. MC penalizes aggressive squeezing — but squeezing is the winning strategy. Same failure mode as Iter 33 (defensive eval signals: 37-48%).
-
-2. **MC is extremely noisy.** Trace analysis (10 games, 3642 turns):
-   - MC disagrees with BRS on **44% of all turns** (early game: 52%, late: 33%)
-   - Median survival spread: 0.078 — barely above activation thresholds
-   - BRS picks MC's "worst" direction 28% of the time — but BRS is right (tactical depth)
-
-3. **Random play can't model territory collapse.** Deaths happen when the optimal opponent closes a corridor exit in one move. Random opponents do this by accident ~5% of the time — MC survival rates converge to ~50-70% in all directions, drowning the signal.
-
-### Improvement ideas for Iter 36b
-
-The infrastructure is solid. The problem is the **rollout policy**, not the framework. Two ideas:
-
-**Idea A: Smarter rollout policy (~10-20x more expensive per move, fewer but realistic games)**
-
-Replace `randomSafeMove` with a lightweight heuristic:
-- **Quick flood count** (~200ns): for each direction, count reachable cells in 3-4 BFS steps → pick direction with more space. Prevents walking into dead ends.
-- **Chase/flee** (~10ns): if bigger, bias toward opponent. If smaller, bias away.
-- **Food-seek** (~10ns): below health 30, bias toward nearest food.
-- Cost: ~200-500ns/move vs ~50ns random → ~10x fewer rollouts (~400-600 in 20ms)
-- Expected benefit: rollouts model territory-aware play, survival signal becomes meaningful
-
-**Idea B: MC only on BRS top-2 directions (focused budget, less noise)**
-
-Instead of round-robin across all 4 directions, only run rollouts for BRS's top-2 scored directions:
-- BRS says "right=25, up=23, down=10, left=-5" → only test right vs up
-- All rollout budget goes to 2 directions → 2-3x more rollouts per direction → stronger signal
-- MC never overrides toward a direction BRS rejected → eliminates 80% of noise
-- Only activates when BRS top-2 scores are close (gap < 5 points) → MC as tiebreaker only
-- Much less likely to hurt: worst case is 50/50 between BRS's two best options
-
-**Idea A+B combined** is the strongest path: smart rollouts on top-2 only.
-
-### Infrastructure retained
-
-- `logic/rollout.go`: `MCRolloutTimed`, `RolloutStats`, `MCRolloutResult`, `applyMCBias`, `randomSafeMove`, tunable params (MC_WEIGHT, MC_SPREAD, MC_GATE, MC_TURNS)
-- `logic/search.go`: `BestMoveIterative` with BRS+MC pipeline, `BRSResult`
-- `main.go`: Adaptive budget system, env var MC tuning
-- `trace.go`: Diagnostic MC rollout per-direction survival in trace output
-- `scripts/mc_sweep.sh`, `scripts/mc_sweep2.sh`: parameter sweep infrastructure
-
----
-
 ## Iter 37 — Survival Mode: Longest Path in Confined Space
 
 **Status:** PLANNED (deferred, depends on Iter 35 data)
@@ -234,10 +140,19 @@ Instead of round-robin across all 4 directions, only run rollouts for BRS's top-
 
 ## Future Directions
 
-**MC rollout v2 (Iter 36b — smarter rollouts + focused budget):**
-- Smart rollout policy: flood-count + chase/flee + food-seek (~200-500ns/move)
-- Top-2 BRS directions only: focused budget, less noise, tiebreaker-only
-- See Iter 36 improvement ideas above
+**MC rollouts: ❌ CLOSED — do not retry (Iter 29, 36, 36b all failed)**
+Random, heuristic, and smart rollout policies all produce anti-predictive survival signals. RL as rollout policy infeasible (speed/quality tradeoff). See Iter 36b analysis.
+
+**RL-assisted eval (distillation):**
+- Train RL model to predict game outcomes from positions
+- Distill knowledge into 2-3 new eval signals at ~200ns cost
+- BRS still searches, but with RL-informed eval
+- Requires competitive RL model first (currently 0% vs BRS)
+
+**RL single-eval tiebreaker:**
+- When BRS gap < 2, run 4 ONNX forward passes (~2ms total) for NN position preference
+- No rollouts — just "which position does the NN prefer?"
+- Requires ONNX runtime in Go + competitive RL model
 
 **Long-horizon alternatives:**
 - **Simplified territory projection**: strip board to heads + territory boundaries, simulate territory evolution without full game rules. No body tracking, no food — just "who controls what space."
@@ -278,3 +193,4 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | 34 | — | — | ❌ Dead end: bottleneck routing (40-57%, depth regression) |
 | 35 | — | — | ❌ Dead end: tail reachability/loopability (signals too late) |
 | 36 | — | — | ❌ Dead end: MC random rollouts (32-52%, 22 configs, random policy too noisy) |
+| 36b | — | — | ❌ Dead end: MC smart rollouts + top-2 (47%, 0 overrides, MC structurally dead) |

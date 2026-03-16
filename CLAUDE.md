@@ -37,11 +37,11 @@ When finishing an iteration:
 - All dev tools project-scoped via `go get -tool` + `go tool <name>`.
 - Board sizes: 7x7, 11x11, 19x19 all supported. `maxBoardCells=361`. Loops use `Width*Height`, no 11x11 cost.
 
-## Current state (Iter 36 dead end, v32 current, Iter 36b next)
-v32: Territory connectivity signal (absolute MyConnectivity). 56-61% vs v31. Iter 33-36 dead ends. Iter 36: MC random rollouts (32-52%, 22 configs tested) — same flaw as MCTS Iter 29: random opponents don't model territory collapse, MC favors conservative play. See ROADMAP.md for details.
+## Current state (Iter 36b dead end, v32 current, Iter 37 next)
+v32: Territory connectivity signal (absolute MyConnectivity). 56-61% vs v31. Iter 33-36b all dead ends. MC rollouts are a closed dead end: smart policy (flood+chase, 1730ns) has same anti-predictive signal as random (47% vs v32, 0 overrides in 7504 turns). Survival correlates with conservative play, but winners play aggressively. RL as rollout policy infeasible. See ROADMAP.md for details.
 
 ## Direction
-Iter 36b: MC rollout v2 — smart rollout policy (flood-count + chase/flee) + top-2 BRS directions only. Iter 37: Survival mode (longest path in confined space). See ROADMAP.md.
+Iter 37: Survival mode (longest path in confined space). Iter 38: Adaptive time management. Future: RL-distilled eval signals, RL single-eval tiebreaker (ONNX in Go). See ROADMAP.md.
 
 ## Go LSP (gopls)
 `gopls` v0.21.1 at `/Users/bodist/go/bin/gopls`. Use for type checking (`gopls check`), references, definition lookup, rename, hover, symbols.
