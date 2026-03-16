@@ -168,8 +168,10 @@ func (g *GameSim) bestMoveBRS(myIdx, oppIdx int, budget time.Duration) BRSResult
 	return result
 }
 
-// BestMoveIterative runs iterative deepening with BRS (Best-Reply Search).
-func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction {
+// BestMoveIterative runs BRS with fixed budget, then MC rollouts with separate budget.
+// brsBudget is the time for BRS search (e.g. 300ms). mcBudget is the time for MC
+// rollouts (e.g. 50-120ms from adaptive headroom). MC runs after BRS completes.
+func (g *GameSim) BestMoveIterative(myID string, brsBudget, mcBudget time.Duration) Direction {
 	myIdx := g.ResolveIdx(myID)
 	if myIdx == -1 {
 		return Down
@@ -183,10 +185,30 @@ func (g *GameSim) BestMoveIterative(myID string, budget time.Duration) Direction
 		}
 	}
 
-	result := g.bestMoveBRS(myIdx, oppIdx, budget)
+	result := g.bestMoveBRS(myIdx, oppIdx, brsBudget)
+
+	// MC rollouts use all remaining MC budget.
+	var mcResult MCRolloutResult
+	if mcBudget > 0 {
+		mcResult = MCRolloutTimed(g, myIdx, oppIdx, RolloutMaxTurns, mcBudget)
+	}
+
+	// Compute lateBlend for phase-dependent MC weight.
+	totalBody := 0
+	for i := range g.Snakes {
+		if g.Snakes[i].IsAlive() {
+			totalBody += g.Snakes[i].Length
+		}
+	}
+	boardFill := float64(totalBody) / float64(g.Width*g.Height)
+	lateBlend := clamp01((boardFill - 0.30) / 0.20)
+
+	bestDir := applyMCBias(result, mcResult, lateBlend)
+
 	g.LastCompletedDepth = result.Depth
 	g.LastNodeCount = result.Nodes
-	return result.BestDir
+	g.LastMCResult = &mcResult
+	return bestDir
 }
 
 

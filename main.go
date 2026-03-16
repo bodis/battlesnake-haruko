@@ -2,6 +2,8 @@ package main
 
 import (
 	"log"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/bodist/haruko/logic"
@@ -19,20 +21,47 @@ func info() BattlesnakeInfoResponse {
 }
 
 func start(state GameState) {
-	log.Printf("GAME START %s\n", state.Game.ID)
+	log.Printf("GAME START %s (timeout=%dms)\n", state.Game.ID, state.Game.Timeout)
+	initBudgetTracker(state.Game.ID, state.Game.Timeout)
 	traceStart(state.Game.ID, state.You.ID, state.Board.Width, state.Board.Height)
 }
 
 func end(state GameState) {
 	log.Printf("GAME OVER  %s\n", state.Game.ID)
+	removeBudgetTracker(state.Game.ID)
 	traceEnd(state.Game.ID, state.You.ID, state)
 }
 
+const brsBudget = 300 * time.Millisecond // fixed BRS budget, proven depth
+
 func move(state GameState) BattlesnakeMoveResponse {
+	computeStart := time.Now()
+
+	totalBudget := computeBudget(state.Game.ID, state.You.Latency)
+	mcBudget := totalBudget - brsBudget // adaptive headroom goes to MC rollouts
+	if mcBudget < 20*time.Millisecond {
+		mcBudget = 20 * time.Millisecond // minimum MC budget
+	}
+
 	sim := gameSimFromState(state)
-	dir := sim.BestMoveIterative(state.You.ID, 300*time.Millisecond)
+	dir := sim.BestMoveIterative(state.You.ID, brsBudget, mcBudget)
 	m := logic.DirectionName(dir)
-	log.Printf("MOVE %d: %s (health=%d)\n", state.Turn, m, state.You.Health)
+
+	computeTime := time.Since(computeStart)
+	recordComputeTime(state.Game.ID, computeTime)
+
+	mcRollouts := 0
+	if sim.LastMCResult != nil {
+		for d := 0; d < 4; d++ {
+			mcRollouts += sim.LastMCResult.Stats[d].Total
+		}
+	}
+
+	log.Printf("MOVE %d: %s (health=%d brs=%dms mc=%dms compute=%dms depth=%d rollouts=%d)\n",
+		state.Turn, m, state.You.Health,
+		brsBudget.Milliseconds(), mcBudget.Milliseconds(),
+		computeTime.Milliseconds(),
+		sim.LastCompletedDepth, mcRollouts)
 	traceTurn(state.Game.ID, state.You.ID, state, sim, m)
 	return BattlesnakeMoveResponse{Move: m}
 }
@@ -73,6 +102,34 @@ func gameSimFromState(state GameState) *logic.GameSim {
 	}
 }
 
+
+func init() {
+	// MC rollout tuning via environment variables.
+	if v := os.Getenv("MC_WEIGHT"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			logic.MCWeight = f
+			log.Printf("MC_WEIGHT=%.1f", f)
+		}
+	}
+	if v := os.Getenv("MC_SPREAD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			logic.MCSpreadThreshold = f
+			log.Printf("MC_SPREAD=%.2f", f)
+		}
+	}
+	if v := os.Getenv("MC_GATE"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			logic.MCLateGate = f
+			log.Printf("MC_GATE=%.2f", f)
+		}
+	}
+	if v := os.Getenv("MC_TURNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			logic.RolloutMaxTurns = n
+			log.Printf("MC_TURNS=%d", n)
+		}
+	}
+}
 
 func main() {
 	RunServer()

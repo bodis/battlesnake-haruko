@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/bodist/haruko/logic"
 )
@@ -86,6 +87,14 @@ type traceRecord struct {
 	OppFunnelRatio   float64 `json:"opp_funnel_ratio,omitempty"`
 	OppCorridorRatio float64 `json:"opp_corridor_ratio,omitempty"`
 	OppEscapeRatio   float64 `json:"opp_escape_ratio,omitempty"`
+
+	// Diagnostic: MC rollout survival rates per direction
+	MCSurvUp    float64 `json:"mc_surv_up,omitempty"`
+	MCSurvDown  float64 `json:"mc_surv_down,omitempty"`
+	MCSurvLeft  float64 `json:"mc_surv_left,omitempty"`
+	MCSurvRight float64 `json:"mc_surv_right,omitempty"`
+	MCBestDir   string  `json:"mc_best_dir,omitempty"`
+	MCWorstDir  string  `json:"mc_worst_dir,omitempty"`
 
 	// Footer fields
 	Result     string `json:"result,omitempty"`
@@ -254,6 +263,36 @@ func traceTurn(gameID, snakeID string, state GameState, sim *logic.GameSim, move
 		OppLoopable:      oppLoopable,
 		TurnsToDeathEst:  turnsToDeathEst,
 	}
+
+	// MC rollout diagnostics (outside game budget — trace runs after move returned).
+	mcResult := logic.MCRolloutTimed(sim, myIdx, oppIdx, 100, 30*time.Millisecond)
+	rec.MCSurvUp = mcResult.Stats[logic.Up].SurvivalRate
+	rec.MCSurvDown = mcResult.Stats[logic.Down].SurvivalRate
+	rec.MCSurvLeft = mcResult.Stats[logic.Left].SurvivalRate
+	rec.MCSurvRight = mcResult.Stats[logic.Right].SurvivalRate
+
+	// Find best/worst MC directions.
+	bestMCSurv := -1.0
+	worstMCSurv := 2.0
+	bestMCDir := ""
+	worstMCDir := ""
+	for _, d := range logic.AllDirections {
+		if !mcResult.Valid[d] || mcResult.Stats[d].Total == 0 {
+			continue
+		}
+		rate := mcResult.Stats[d].SurvivalRate
+		if rate > bestMCSurv {
+			bestMCSurv = rate
+			bestMCDir = logic.DirectionName(d)
+		}
+		if rate < worstMCSurv {
+			worstMCSurv = rate
+			worstMCDir = logic.DirectionName(d)
+		}
+	}
+	rec.MCBestDir = bestMCDir
+	rec.MCWorstDir = worstMCDir
+
 	tg.records = append(tg.records, rec)
 }
 

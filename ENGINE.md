@@ -130,6 +130,7 @@ Entire hot path is allocation-free (sync.Pool + stack arrays):
 | 32 | Territory connectivity signal (absolute MyConnectivity) | 56-61% vs v31, ~443-451 avg turns |
 | 34 | Bottleneck-aware routing (head-side AP region) | ❌ Dead end (40-57%, depth regression) |
 | 35 | Tail reachability / loopability diagnostic signals | ❌ Dead end (signals too late, 1-turn death collapse) |
+| 36 | MC rollout with random play policy | ❌ Dead end (32-52%, random policy too noisy — same flaw as MCTS Iter 29) |
 
 ## Dead Ends
 
@@ -167,6 +168,9 @@ Flat depth-1 MCTS (UCB1, random opponent moves, xorshift64 PRNG, ~52K sims/50ms)
 
 ### Bottleneck routing via Tarjan's in leaf eval (Iter 34): 40-57% (depth regression)
 Head-side flood fill from snake head through non-AP territory cells, penalizing when head is on the small side of an AP. Signal concept is directional (guides toward larger region, not general narrowness penalty). Failed because Tarjan's AP detection costs ~2150ns/eval — 3x the Voronoi baseline. At every BRS leaf node, this causes 1-2 plies of depth regression. Phase-gating (running Tarjan's only in late game) reduces frequency but late-game depth is the most critical. N=200 confirmation showed gate=0.5/w=10 was 50.5% (initial N=100 of 57% was noise). Any eval signal requiring Tarjan's is not viable for leaf evaluation. Infrastructure retained for diagnostic/root-only use.
+
+### MC rollout with random play policy (Iter 36): 32–52% (random policy too noisy)
+Timed MC rollouts from root position after BRS completes (separate budget, no BRS depth loss). Round-robin across valid directions, `randomSafeMove` (isSafeDir + wall fallback), xorshift64 PRNG. Phase-scaled `applyMCBias` adjusts BRS scores by survival spread. 22 configurations tested across weight (0-30), spread threshold (0.03-0.20), late gate (0.05-0.3), rollout turns (50-200). No configuration reliably beats v32 at N=100. Root cause: same flaw as Iter 29 MCTS — random opponents don't model territory collapse (deaths from optimal corridor closing), MC favors conservative play while squeezing wins. Trace analysis: MC disagrees with BRS 44% of turns (52% early, 33% late), median spread 0.078, pure noise. Infrastructure retained for v2 (smart rollout policy + top-2 focused budget).
 
 ### Tail reachability / loopability as death predictor (Iter 35): signals too late
 Instrumented trace-only diagnostic signals: tail reachability (BFS from head to tail through owned territory + body), loopability (tail reachable AND territory >= snake length), TurnsToDeathEst (escape reachability when not loopable). 100-game self-play analysis found: (1) Tail is always reachable (100% of all turns, wins and losses) — zero discriminative value. (2) Loopability drops only 1-2 turns before death (48% at 1 turn, 19% at 5 turns, 6% at 20 turns) — lagging indicator, not early warning. (3) Territory collapses from 20-50 to 1 in a single turn in 90% of non-starvation deaths — the opponent closes the last corridor exit in one move. (4) Loopability asymmetry is symmetric in self-play (mine-only 3.9% in wins vs 2.4% in losses). (5) TurnsToDeathEst has MAE=36 turns, bias=-27.3 (massive underestimate). The fundamental problem: deaths are instantaneous 1-turn territory collapses beyond BRS horizon, not gradual squeezes. By the time any survival signal fires, it's already too late. These signals cannot work as eval inputs.

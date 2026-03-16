@@ -11,10 +11,10 @@
 | Metric | Value |
 |--------|-------|
 | **Completed** | Iterations 1-20, 23-28, 30-35 (see below + ROADMAP_FINISHED.md) |
-| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%), Iter 28 partial (tail-aware BRS pruning: 43%), Iter 29 (hybrid BRS+MCTS: 2–46%), Iter 33 (escape/territory eval signals: 37–54%), Iter 34 (bottleneck routing: 40-57%, depth regression), Iter 35 (tail reachability/loopability: signals too late, 1-turn death collapse) |
+| **Dead ends** | Iter 21 (positional quality), Iter 22 (aggression), Iter 27 partial (full isSafeDir pruning: 32%), Iter 28 partial (tail-aware BRS pruning: 43%), Iter 29 (hybrid BRS+MCTS: 2–46%), Iter 33 (escape/territory eval signals: 37–54%), Iter 34 (bottleneck routing: 40-57%, depth regression), Iter 35 (tail reachability/loopability: signals too late), Iter 36 (MC random rollouts: 32–52%, same flaw as MCTS) |
 | **Current** | v32 Territory connectivity: absolute MyConnectivity signal; 56-61% vs v31 (N=100); ~443-451 avg turns |
-| **Next** | Iter 36 (MC strategic rollout, diagnostic) → Iter 37 (survival mode) |
-| **Key insight** | Deaths are instantaneous 1-turn territory collapses beyond BRS horizon. Survival signals (tail reachability, loopability) are lagging indicators — they detect collapse after it happens, not before. Need longer-horizon methods (MC rollouts, territory projection) to predict collapse before it occurs. |
+| **Next** | Iter 36b (MC rollout v2: smart policy + top-2 focused) → Iter 37 (survival mode) |
+| **Key insight** | Random rollout survival ≠ optimal play survival. MC with random policy has the same fundamental flaw as MCTS (Iter 29): favors moves good against weak play, penalizes aggressive squeezing. Need smarter rollout policy and focused budget (top-2 BRS directions only). |
 
 ---
 
@@ -90,85 +90,97 @@
 
 ---
 
-## Iter 36 — Monte Carlo Strategic Rollout (Root-Level, Diagnostic)
+## Iter 36 — MC Rollout with Random Play (Dead End — Random Policy Too Noisy)
 
-**Status:** PLANNED
+**Status:** ❌ DEAD END (random policy) — 32–52% across 22 configurations
 
-**Goal:** Run cheap random game rollouts from the root position to detect which initial direction pairs lead to long-term death. Computed once per move alongside BRS. **Phase A is diagnostic only (trace + analyze). Phase B (wiring into BRS) only happens if Phase A shows clear value.**
+**Goal:** Run random game rollouts from root position to detect which direction leads to long-term death. Computed once per move after BRS completes (separate budget, no BRS depth loss).
 
-**Why:** BRS sees 12-14 plies (~6-7 full turns). Deaths are decided by territory flips 20-50+ turns ahead. Random rollouts are tactically stupid but can detect **structural** long-term problems — like "going left leads to a partition where I have 30 cells and die in 40 turns."
+### What was implemented
 
-### Design
+- `logic/rollout.go`: `MCRolloutTimed(g, myIdx, oppIdx, maxTurns, budget)` — timed round-robin rollouts across valid root directions, `randomSafeMove` (isSafeDir + wall fallback), xorshift64 PRNG
+- `logic/rollout.go`: `applyMCBias(result, mc, lateBlend)` — phase-scaled BRS score adjustment using MC survival spread
+- `logic/search.go`: `BestMoveIterative` wired to run MC after BRS, apply bias
+- `main.go`: Adaptive budget system, env var tuning (MC_WEIGHT, MC_SPREAD, MC_GATE, MC_TURNS)
+- `trace.go`: Diagnostic MC rollouts (30ms, outside game budget) with per-direction survival rates
+- Throughput: ~4000-6000 rollouts in 20-50ms budget (~100 turns each)
 
-**Step 1: Generate initial direction pairs**
+### Parameter sweep results
 
-From current position, enumerate all valid 2-ply openings for us:
-- Ply 1: our valid moves (exclude wall collisions) → typically 3 directions
-- Ply 2: from each ply-1 result, our valid moves → typically 2-3 directions
-- Result: 6-9 direction pairs, minus wall overlaps → typically **6-8 valid pairs**
-- Opponent plays random valid move at each setup ply
+**Phase 1 (N=50 vs v32):**
 
-**Step 2: Distribute rollouts evenly**
+| Config | Win% | Notes |
+|--------|------|-------|
+| mc-off (w=0) | 40% | Baseline (noise at N=50) |
+| w=10, s=0.10 | 50% | |
+| w=15, s=0.10 | 44% | Original setting |
+| w=20, s=0.10 | 44% | |
+| w=25, s=0.10 | 38% | Too aggressive |
+| w=30, s=0.10 | 38% | Too aggressive |
+| w=15, s=0.05 | 50% | |
+| w=20, s=0.05 | **56%** | Best N=50 — but noise |
+| w=15, gate=0.3 | 32% | Late-only MC terrible |
+| w=15, turns=50 | 40% | Too few rollout turns |
+| w=15, turns=200 | 42% | Too few samples |
 
-Given total rollout budget N (e.g., 1000):
-- Divide evenly across all valid direction pairs: ~125-167 rollouts each
-- Each rollout: from the 2-ply position, both sides play random valid moves (uniform from non-wall moves) until game over or max turns (200)
-- Random move selection: xorshift64 PRNG (reuse from MCTS infra in `logic/mcts.go`)
+**Phase 2 (N=100 vs v32) — confirming top configs:**
 
-**Step 3: Measure per direction pair**
+| Config | Win% |
+|--------|------|
+| w=20, s=0.05 | **43%** (N=50 "56%" was noise) |
+| w=18, s=0.05 | 45% |
+| w=22, s=0.05 | 45% |
+| w=20, s=0.03 | 44% |
+| w=20, s=0.07 | 52% |
+| w=20, s=0.05, gate=0.05 | 44% |
+| w=20, s=0.05, turns=75 | 43% |
 
-For each `(dir1, dir2)` pair, record:
-- **Survival rate**: % of rollouts where we're alive at the end
-- **Avg turns survived**: mean game length across rollouts
-- **Territory at death**: average territory when we die
+**No configuration reliably beats v32 at N=100.**
 
-**Step 4: Phase A — Log to trace (diagnostic only)**
+### Why random rollouts fail
 
-Log per-direction survival rates to trace. Analyze:
-- Does the worst direction pair correlate with BRS's chosen move being wrong?
-- How far ahead of actual death does MC detect the bad direction?
-- Does MC agree with BRS most of the time, or does it add genuinely new information?
-- When MC disagrees with BRS AND game is eventually lost, was MC right?
+**Same root cause as Iter 29 (MCTS):** random opponents don't model how deaths actually happen.
 
-**Step 5: Phase B — Wire as BRS signal (only if Phase A shows value)**
+1. **MC favors conservative play.** Random survival is highest in open space. MC penalizes aggressive squeezing — but squeezing is the winning strategy. Same failure mode as Iter 33 (defensive eval signals: 37-48%).
 
-If data shows MC rollouts detect real danger:
-- Collapse pairs to per-direction survival: `dir1_survival = avg of all pairs starting with dir1`
-- Pass to BRS as root-level bias: penalize directions with low survival rate
-- Weight TBD based on Phase A data
+2. **MC is extremely noisy.** Trace analysis (10 games, 3642 turns):
+   - MC disagrees with BRS on **44% of all turns** (early game: 52%, late: 33%)
+   - Median survival spread: 0.078 — barely above activation thresholds
+   - BRS picks MC's "worst" direction 28% of the time — but BRS is right (tactical depth)
 
-### Implementation
+3. **Random play can't model territory collapse.** Deaths happen when the optimal opponent closes a corridor exit in one move. Random opponents do this by accident ~5% of the time — MC survival rates converge to ~50-70% in all directions, drowning the signal.
 
-| File | Change |
-|------|--------|
-| `logic/rollout.go` | New file: `MCRollout(g, myIdx, oppIdx, totalRollouts, maxTurns) map[Direction]RolloutStats`. Generates direction pairs, distributes rollouts, runs random games using `CloneFromPool`/`Release` + `Step`. |
-| `logic/rollout.go` | `randomValidMove(g, snakeIdx)` — uniform random from non-wall moves, xorshift64 PRNG |
-| `logic/rollout.go` | `RolloutStats` struct: `SurvivalRate float64`, `AvgTurns float64`, `Rollouts int` |
-| `trace.go` | Add per-direction rollout fields: `MCUp`, `MCDown`, `MCLeft`, `MCRight` (survival rate 0.0-1.0), `MCBestDir`, `MCWorstDir` |
-| `trace.go` | Call `MCRollout` in `traceTurn()` when trace enabled (outside game budget) |
-| `cmd/analyze/main.go` | New analyze mode: `rollout` — compare MC survival rates vs BRS chosen direction vs game outcome. Report: (1) MC-BRS agreement rate, (2) when MC disagrees, who was right, (3) MC worst-direction as death predictor |
+### Improvement ideas for Iter 36b
 
-### Cost budget
+The infrastructure is solid. The problem is the **rollout policy**, not the framework. Two ideas:
 
-| Component | Cost |
-|-----------|------|
-| Per rollout step | `CloneFromPool` (19ns) + `Step` (49ns) + random move (~5ns) ≈ 73ns |
-| Per rollout (200 turns) | ~15μs |
-| 1000 rollouts total | ~15ms |
-| **Trace-only (Phase A)** | 15ms, computed outside game budget — fine |
-| **If wired later (Phase B)** | ~30-50ms carved from 300ms budget → ~2000 rollouts → ~250/direction pair |
+**Idea A: Smarter rollout policy (~10-20x more expensive per move, fewer but realistic games)**
 
-### Testing plan
+Replace `randomSafeMove` with a lightweight heuristic:
+- **Quick flood count** (~200ns): for each direction, count reachable cells in 3-4 BFS steps → pick direction with more space. Prevents walking into dead ends.
+- **Chase/flee** (~10ns): if bigger, bias toward opponent. If smaller, bias away.
+- **Food-seek** (~10ns): below health 30, bias toward nearest food.
+- Cost: ~200-500ns/move vs ~50ns random → ~10x fewer rollouts (~400-600 in 20ms)
+- Expected benefit: rollouts model territory-aware play, survival signal becomes meaningful
 
-```
-make trace N=50
-make analyze MODE=rollout
-```
+**Idea B: MC only on BRS top-2 directions (focused budget, less noise)**
 
-**Success criteria for Phase A:**
-- MC worst-direction survival rate < 30% predicts actual death within 50 turns
-- MC direction ranking disagrees with BRS choice on > 10% of turns (otherwise redundant)
-- When MC disagrees with BRS AND game is lost, MC was right > 60% of the time
+Instead of round-robin across all 4 directions, only run rollouts for BRS's top-2 scored directions:
+- BRS says "right=25, up=23, down=10, left=-5" → only test right vs up
+- All rollout budget goes to 2 directions → 2-3x more rollouts per direction → stronger signal
+- MC never overrides toward a direction BRS rejected → eliminates 80% of noise
+- Only activates when BRS top-2 scores are close (gap < 5 points) → MC as tiebreaker only
+- Much less likely to hurt: worst case is 50/50 between BRS's two best options
+
+**Idea A+B combined** is the strongest path: smart rollouts on top-2 only.
+
+### Infrastructure retained
+
+- `logic/rollout.go`: `MCRolloutTimed`, `RolloutStats`, `MCRolloutResult`, `applyMCBias`, `randomSafeMove`, tunable params (MC_WEIGHT, MC_SPREAD, MC_GATE, MC_TURNS)
+- `logic/search.go`: `BestMoveIterative` with BRS+MC pipeline, `BRSResult`
+- `main.go`: Adaptive budget system, env var MC tuning
+- `trace.go`: Diagnostic MC rollout per-direction survival in trace output
+- `scripts/mc_sweep.sh`, `scripts/mc_sweep2.sh`: parameter sweep infrastructure
 
 ---
 
@@ -222,7 +234,12 @@ make analyze MODE=rollout
 
 ## Future Directions
 
-**Long-horizon alternatives (if MC rollout doesn't pan out):**
+**MC rollout v2 (Iter 36b — smarter rollouts + focused budget):**
+- Smart rollout policy: flood-count + chase/flee + food-seek (~200-500ns/move)
+- Top-2 BRS directions only: focused budget, less noise, tiebreaker-only
+- See Iter 36 improvement ideas above
+
+**Long-horizon alternatives:**
 - **Simplified territory projection**: strip board to heads + territory boundaries, simulate territory evolution without full game rules. No body tracking, no food — just "who controls what space."
 - **Voronoi trajectory simulation**: project Voronoi boundary forward assuming both snakes move toward territory center. Detect convergence toward partition.
 - **Root-only Tarjan's**: compute AP/bottleneck once at root (not per leaf), use as strategic bias. Avoids the depth regression that killed Iter 34.
@@ -260,3 +277,4 @@ Continues from ROADMAP_FINISHED.md snapshot log.
 | 32 | `snapshots/haruko-69c43bb` | ~443-451 | Territory connectivity (absolute MyConnectivity); 56-61% vs v31 |
 | 34 | — | — | ❌ Dead end: bottleneck routing (40-57%, depth regression) |
 | 35 | — | — | ❌ Dead end: tail reachability/loopability (signals too late) |
+| 36 | — | — | ❌ Dead end: MC random rollouts (32-52%, 22 configs, random policy too noisy) |
